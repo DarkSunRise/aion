@@ -274,7 +274,7 @@ def main():
         return
 
     # --search: search and exit
-    if args.search:
+    if args.search is not None:
         db = SessionDB(config.aion_home / "state.db")
         db.connect()
         results = db.search(args.search, limit=10)
@@ -284,7 +284,7 @@ def main():
 
     # Resolve --resume / --continue
     resume_session_id = None
-    if args.resume:
+    if args.resume is not None:
         db = SessionDB(config.aion_home / "state.db")
         db.connect()
         resolved = db.resolve_session_id(args.resume)
