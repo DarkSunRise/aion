@@ -1,0 +1,35 @@
+[project]
+name = "kode"
+version = "0.1.0"
+description = "Enterprise-hardened AI agent built on Anthropic's Claude Agent SDK"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "claude-agent-sdk>=0.1.52",
+    "anthropic>=0.86.0",
+    "aiohttp>=3.13.4",
+    "python-telegram-bot>=22.7",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+gemini = [
+    "google-genai>=1.0",
+]
+
+[project.scripts]
+kode = "kode.cli:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+]
