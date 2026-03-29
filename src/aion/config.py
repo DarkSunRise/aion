@@ -67,6 +67,7 @@ class AionConfig:
     audit: AuditConfig = field(default_factory=AuditConfig)
     auxiliary: Optional[AuxiliaryConfig] = None
     gateway: dict = field(default_factory=dict)
+    mcp_servers: dict = field(default_factory=dict)  # name -> {command, args, env}
 
     # Runtime — not from config file
     aion_home: Path = field(default_factory=get_aion_home)
@@ -131,6 +132,14 @@ def load_config(config_path: Optional[Path] = None) -> AionConfig:
             api_key=aux_raw.get("api_key"),
         )
 
+    # Parse mcp_servers — interpolate env vars in each server config
+    mcp_servers_raw = raw.get("mcp_servers", {})
+    mcp_servers = {}
+    if isinstance(mcp_servers_raw, dict):
+        for name, server_cfg in mcp_servers_raw.items():
+            if isinstance(server_cfg, dict):
+                mcp_servers[name] = _interpolate_dict(server_cfg)
+
     return AionConfig(
         model=raw.get("model", "claude-sonnet-4-20250514"),
         max_turns=raw.get("max_turns", 100),
@@ -139,5 +148,6 @@ def load_config(config_path: Optional[Path] = None) -> AionConfig:
         audit=audit,
         auxiliary=auxiliary,
         gateway=raw.get("gateway", {}),
+        mcp_servers=mcp_servers,
         aion_home=aion_home,
     )

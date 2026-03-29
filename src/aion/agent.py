@@ -130,8 +130,10 @@ class AionAgent:
         if cc_session_id:
             options.resume = cc_session_id
 
-        # MCP servers: always include Aion tools, merge any additional
+        # MCP servers: aion tools + external from config + caller-provided
         mcp = {"aion": self._aion_mcp}
+        for name, server_cfg in self.config.mcp_servers.items():
+            mcp[name] = server_cfg
         if mcp_servers:
             mcp.update(mcp_servers)
         options.mcp_servers = mcp
@@ -259,9 +261,14 @@ class AionAgent:
             cwd=cwd or str(Path.cwd()),
             model=effective_model,
             resume=cc_session_id,
-            mcp_servers={"aion": self._aion_mcp},
             hooks=hooks_dict,
         )
+
+        # MCP servers: aion tools + external from config
+        mcp = {"aion": self._aion_mcp}
+        for name, server_cfg in self.config.mcp_servers.items():
+            mcp[name] = server_cfg
+        options.mcp_servers = mcp
 
         result_text = ""
         new_cc_session_id = None
