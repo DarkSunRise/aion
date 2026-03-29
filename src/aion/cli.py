@@ -1,10 +1,10 @@
 """
-CLI entry point for Kode.
+CLI entry point for Aion.
 
 Usage:
-    kode "write a haiku"                    # One-shot
-    kode                                     # Interactive
-    kode --gateway telegram                  # Start gateway
+    aion "write a haiku"                    # One-shot
+    aion                                     # Interactive
+    aion --gateway telegram                  # Start gateway
 """
 
 import asyncio
@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from .config import load_config
-from .agent import KodeAgent
+from .agent import AionAgent
 
 
 def _print_message(msg: dict):
@@ -40,7 +40,7 @@ def _print_message(msg: dict):
 async def _run_oneshot(prompt: str, cwd: str):
     """Run a single prompt and exit."""
     config = load_config()
-    agent = KodeAgent(config)
+    agent = AionAgent(config)
 
     async for msg in agent.run(prompt, source="cli", cwd=cwd):
         _print_message(msg)
@@ -49,9 +49,9 @@ async def _run_oneshot(prompt: str, cwd: str):
 async def _run_interactive(cwd: str):
     """Interactive REPL."""
     config = load_config()
-    agent = KodeAgent(config)
+    agent = AionAgent(config)
 
-    print("Kode — Anthropic-native AI agent")
+    print("Aion — Anthropic-native AI agent")
     print(f"Model: {config.model}")
     print(f"Memory: {agent.memory._char_count('memory')}/{config.memory.char_limit} chars")
     print("Type /quit to exit\n")
@@ -75,7 +75,7 @@ async def _run_interactive(cwd: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Kode — Anthropic-native AI agent")
+    parser = argparse.ArgumentParser(description="Aion — Anthropic-native AI agent")
     parser.add_argument("prompt", nargs="?", help="One-shot prompt (omit for interactive mode)")
     parser.add_argument("--cwd", default=".", help="Working directory")
     parser.add_argument("--gateway", help="Start gateway (telegram, discord, slack)")

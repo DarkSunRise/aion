@@ -1,7 +1,7 @@
 """
-Configuration management for Kode.
+Configuration management for Aion.
 
-Loads from ~/.kode/config.yaml with env var interpolation.
+Loads from ~/.aion/config.yaml with env var interpolation.
 """
 
 import os
@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Optional
 
 
-def get_kode_home() -> Path:
-    """Return the Kode home directory, creating it if needed."""
-    home = Path(os.environ.get("KODE_HOME", Path.home() / ".kode"))
+def get_aion_home() -> Path:
+    """Return the Aion home directory, creating it if needed."""
+    home = Path(os.environ.get("AION_HOME", Path.home() / ".aion"))
     home.mkdir(parents=True, exist_ok=True)
     return home
 
@@ -59,7 +59,7 @@ class AuditConfig:
 
 
 @dataclass
-class KodeConfig:
+class AionConfig:
     model: str = "claude-sonnet-4-20250514"
     max_turns: int = 100
     permission_mode: str = "bypassPermissions"
@@ -69,7 +69,7 @@ class KodeConfig:
     gateway: dict = field(default_factory=dict)
 
     # Runtime — not from config file
-    kode_home: Path = field(default_factory=get_kode_home)
+    aion_home: Path = field(default_factory=get_aion_home)
 
 
 def _interpolate_env(value: str) -> str:
@@ -93,12 +93,12 @@ def _interpolate_dict(d: dict) -> dict:
     return result
 
 
-def load_config(config_path: Optional[Path] = None) -> KodeConfig:
+def load_config(config_path: Optional[Path] = None) -> AionConfig:
     """Load config from YAML, merge with defaults, interpolate env vars."""
-    kode_home = get_kode_home()
+    aion_home = get_aion_home()
 
     if config_path is None:
-        config_path = kode_home / "config.yaml"
+        config_path = aion_home / "config.yaml"
 
     raw = dict(DEFAULT_CONFIG)
 
@@ -131,7 +131,7 @@ def load_config(config_path: Optional[Path] = None) -> KodeConfig:
             api_key=aux_raw.get("api_key"),
         )
 
-    return KodeConfig(
+    return AionConfig(
         model=raw.get("model", "claude-sonnet-4-20250514"),
         max_turns=raw.get("max_turns", 100),
         permission_mode=raw.get("permission_mode", "bypassPermissions"),
@@ -139,5 +139,5 @@ def load_config(config_path: Optional[Path] = None) -> KodeConfig:
         audit=audit,
         auxiliary=auxiliary,
         gateway=raw.get("gateway", {}),
-        kode_home=kode_home,
+        aion_home=aion_home,
     )

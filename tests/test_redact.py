@@ -1,6 +1,6 @@
 """Tests for secret redaction."""
 
-from kode.redact import redact_secrets
+from aion.redact import redact_secrets
 
 
 def test_anthropic_key():

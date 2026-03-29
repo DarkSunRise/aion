@@ -18,7 +18,7 @@ from typing import AsyncIterator, Optional
 
 from claude_agent_sdk import query, ClaudeAgentOptions
 
-from .config import KodeConfig
+from .config import AionConfig
 from .memory.store import MemoryStore
 from .memory.sessions import SessionDB
 from .redact import redact_secrets
@@ -26,29 +26,29 @@ from .redact import redact_secrets
 logger = logging.getLogger(__name__)
 
 
-class KodeAgent:
+class AionAgent:
     """
     Wraps claude-agent-sdk with memory injection and session tracking.
 
     Usage:
-        agent = KodeAgent(config)
+        agent = AionAgent(config)
         async for msg in agent.run("write a haiku", source="cli"):
             print(msg)
     """
 
-    def __init__(self, config: KodeConfig):
+    def __init__(self, config: AionConfig):
         self.config = config
 
         # Memory
         self.memory = MemoryStore(
-            memory_dir=config.kode_home / "memories",
+            memory_dir=config.aion_home / "memories",
             memory_char_limit=config.memory.char_limit,
             user_char_limit=config.memory.user_char_limit,
         )
         self.memory.load()
 
         # Session DB
-        self.sessions = SessionDB(config.kode_home / "state.db")
+        self.sessions = SessionDB(config.aion_home / "state.db")
         self.sessions.connect()
 
     async def run(
@@ -69,7 +69,7 @@ class KodeAgent:
             source: Platform source (cli, telegram, discord, etc.)
             user_id: Platform-specific user ID
             cwd: Working directory for the agent
-            resume_session_id: Kode session ID to resume (looks up CC session ID)
+            resume_session_id: Aion session ID to resume (looks up CC session ID)
             max_turns: Override max turns
             mcp_servers: Additional MCP servers to connect
         """

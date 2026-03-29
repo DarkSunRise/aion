@@ -2,7 +2,7 @@
 
 import tempfile
 from pathlib import Path
-from kode.memory.store import MemoryStore, scan_memory_content
+from aion.memory.store import MemoryStore, scan_memory_content
 
 
 def test_add_and_read():

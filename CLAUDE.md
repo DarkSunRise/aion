@@ -1,4 +1,4 @@
-# Kode — Development Guide
+# Aion — Development Guide
 
 ## What This Is
 
@@ -8,7 +8,7 @@ Thin orchestration shell: memory + gateway + session tracking on top of CC SDK.
 ## Architecture
 
 ```
-src/kode/
+src/aion/
 ├── agent.py           # Core: wraps claude-agent-sdk query() with memory injection
 ├── config.py          # Config loader (YAML + env interpolation)
 ├── cli.py             # CLI entry point (one-shot + interactive)
@@ -30,7 +30,7 @@ src/kode/
 2. **Memory is injected via append_system_prompt** — frozen snapshot at session start,
    writes update disk immediately but don't break prompt cache.
 
-3. **Sessions track CC session IDs** — enables resume across Kode restarts.
+3. **Sessions track CC session IDs** — enables resume across Aion restarts.
 
 4. **Anthropic-first** — optional Gemini for cheap vision/summarization via auxiliary config.
 
@@ -38,18 +38,18 @@ src/kode/
 
 ```bash
 uv sync                          # Install deps
-uv run python -m kode.cli "test" # Run one-shot
+uv run python -m aion.cli "test" # Run one-shot
 uv run pytest tests/             # Run tests
 ```
 
 ## Adding a Gateway Adapter
 
-1. Create `src/kode/gateway/adapters/<platform>.py`
+1. Create `src/aion/gateway/adapters/<platform>.py`
 2. Implement async message receive → agent.run() → send response
 3. Register in gateway runner
 
 ## Adding an MCP Tool
 
 For tools not in CC (TTS, image gen, etc.), create an MCP server:
-1. Create `src/kode/tools/<name>.py` using `claude_agent_sdk.tool()` or standalone MCP
+1. Create `src/aion/tools/<name>.py` using `claude_agent_sdk.tool()` or standalone MCP
 2. Register in config.yaml under `mcp_servers`
