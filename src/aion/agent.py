@@ -29,6 +29,13 @@ from .tools.server import create_aion_mcp_server
 
 logger = structlog.get_logger(__name__)
 
+_AION_SYSTEM_INSTRUCTIONS = (
+    "\n\n## Aion Memory\n"
+    "You are running inside Aion. For persistent memory, use the aion MCP tools "
+    "(mcp__aion__aion_memory_add, mcp__aion__aion_memory_read, etc.), NOT Claude Code's "
+    "built-in memory system. Aion memory persists across all sessions and platforms."
+)
+
 
 class AionAgent:
     """
@@ -96,13 +103,11 @@ class AionAgent:
 
         # Build system prompt with CC preset + memory append
         memory_block = self.memory.system_prompt_block()
+        append_block = (memory_block + _AION_SYSTEM_INSTRUCTIONS) if memory_block else _AION_SYSTEM_INSTRUCTIONS
         system_prompt = {
             "type": "preset",
             "preset": "claude_code",
-            "append": memory_block,
-        } if memory_block else {
-            "type": "preset",
-            "preset": "claude_code",
+            "append": append_block,
         }
 
         # Resolve CC session ID for resume
@@ -243,13 +248,11 @@ class AionAgent:
 
         # Build options with resume
         memory_block = self.memory.system_prompt_block()
+        append_block = (memory_block + _AION_SYSTEM_INSTRUCTIONS) if memory_block else _AION_SYSTEM_INSTRUCTIONS
         system_prompt = {
             "type": "preset",
             "preset": "claude_code",
-            "append": memory_block,
-        } if memory_block else {
-            "type": "preset",
-            "preset": "claude_code",
+            "append": append_block,
         }
 
         try:

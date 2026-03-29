@@ -154,7 +154,7 @@ class TestSystemPromptFormat:
 
     @pytest.mark.asyncio
     async def test_preset_without_memory(self, tmp_path):
-        """When no memory files exist, preset still used but no append."""
+        """When no memory files exist, append still contains aion instructions."""
         memories = tmp_path / "memories"
         memories.mkdir()
         config = AionConfig(
@@ -176,7 +176,9 @@ class TestSystemPromptFormat:
         sp = captured_options["system_prompt"]
         assert sp["type"] == "preset"
         assert sp["preset"] == "claude_code"
-        assert "append" not in sp
+        # Always has append now (aion instructions even without memory)
+        assert "append" in sp
+        assert "aion MCP tools" in sp["append"]
 
 
 class TestMessageHandling:
