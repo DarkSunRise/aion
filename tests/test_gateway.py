@@ -1,12 +1,15 @@
 """Tests for gateway components."""
 
 import os
+import time
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from aion.utils.ansi import strip_ansi
 from aion.gateway.base import GatewayMessage, split_message
-from aion.gateway.session import SessionSource, build_session_context_prompt
+from aion.gateway.session import (
+    SessionSource, SessionTracker, ActiveSession, build_session_context_prompt,
+)
 from aion.gateway.config import (
     GatewayConfig,
     TelegramConfig,
@@ -486,3 +489,177 @@ class TestSlackAdapter:
         adapter.on_message.assert_called_once()
         call_msg = adapter.on_message.call_args[0][0]
         assert call_msg.text == "do something"
+
+
+# ── SessionTracker ──
+
+
+class TestSessionTracker:
+    def test_get_active_returns_none_when_empty(self):
+        tracker = SessionTracker()
+        assert tracker.get_active("telegram", "123") is None
+
+    def test_update_and_get_active(self):
+        tracker = SessionTracker()
+        tracker.update("telegram", "123", "cc-abc", "aion-xyz")
+        active = tracker.get_active("telegram", "123")
+        assert active is not None
+        assert active.cc_session_id == "cc-abc"
+        assert active.aion_session_id == "aion-xyz"
+        assert active.platform == "telegram"
+        assert active.user_id == "123"
+
+    def test_get_active_expired(self):
+        tracker = SessionTracker(continuity_window=1)  # 1 second
+        tracker.update("telegram", "123", "cc-abc", "aion-xyz")
+        # Manually backdate the session
+        key = tracker._key("telegram", "123")
+        tracker._sessions[key].last_activity = time.time() - 2
+        assert tracker.get_active("telegram", "123") is None
+
+    def test_get_active_within_window(self):
+        tracker = SessionTracker(continuity_window=3600)
+        tracker.update("telegram", "123", "cc-abc", "aion-xyz")
+        assert tracker.get_active("telegram", "123") is not None
+
+    def test_clear_removes_session(self):
+        tracker = SessionTracker()
+        tracker.update("telegram", "123", "cc-abc", "aion-xyz")
+        tracker.clear("telegram", "123")
+        assert tracker.get_active("telegram", "123") is None
+
+    def test_clear_nonexistent_no_error(self):
+        tracker = SessionTracker()
+        tracker.clear("telegram", "999")  # No error
+
+    def test_different_users_independent(self):
+        tracker = SessionTracker()
+        tracker.update("telegram", "111", "cc-1", "aion-1")
+        tracker.update("telegram", "222", "cc-2", "aion-2")
+        assert tracker.get_active("telegram", "111").cc_session_id == "cc-1"
+        assert tracker.get_active("telegram", "222").cc_session_id == "cc-2"
+
+    def test_different_platforms_independent(self):
+        tracker = SessionTracker()
+        tracker.update("telegram", "123", "cc-tg", "aion-tg")
+        tracker.update("slack", "123", "cc-sl", "aion-sl")
+        assert tracker.get_active("telegram", "123").cc_session_id == "cc-tg"
+        assert tracker.get_active("slack", "123").cc_session_id == "cc-sl"
+
+    def test_update_overwrites_existing(self):
+        tracker = SessionTracker()
+        tracker.update("telegram", "123", "cc-old", "aion-old")
+        tracker.update("telegram", "123", "cc-new", "aion-new")
+        active = tracker.get_active("telegram", "123")
+        assert active.cc_session_id == "cc-new"
+
+
+# ── Runner session continuity ──
+
+
+class TestRunnerSessionContinuity:
+    @pytest.fixture
+    def tmp_home(self, tmp_path):
+        memories = tmp_path / "memories"
+        memories.mkdir()
+        (memories / "MEMORY.md").write_text("")
+        (memories / "USER.md").write_text("")
+        return tmp_path
+
+    @pytest.fixture
+    def runner(self, tmp_home):
+        from aion.config import AionConfig, MemoryConfig, AuditConfig
+        from aion.gateway.runner import GatewayRunner
+        config = AionConfig(
+            aion_home=tmp_home,
+            memory=MemoryConfig(),
+            audit=AuditConfig(redact_secrets=False),
+        )
+        return GatewayRunner(config)
+
+    def _fake_conversation(self, messages):
+        class _FC:
+            def __aiter__(self):
+                return self._aiter()
+            async def _aiter(inner_self):
+                for m in messages:
+                    yield m
+        return _FC()
+
+    def _system_init(self, session_id="cc-123"):
+        from claude_agent_sdk import SystemMessage
+        return SystemMessage(subtype="init", data={"session_id": session_id, "model": "test", "tools": []})
+
+    def _result(self, session_id="cc-123"):
+        from claude_agent_sdk import ResultMessage
+        return ResultMessage(
+            subtype="success", result="response", session_id=session_id,
+            total_cost_usd=0.01, num_turns=1, duration_ms=100,
+            duration_api_ms=100, is_error=False, stop_reason="end_turn",
+        )
+
+    @pytest.mark.asyncio
+    async def test_first_message_uses_run(self, runner):
+        """First message from a user should use agent.run(), not continue_session()."""
+        msg = GatewayMessage(text="hello", sender_id="u1", chat_id="c1", platform="telegram")
+        run_called = False
+        continue_called = False
+
+        original_run = None
+        original_continue = None
+
+        def mock_query(prompt, options):
+            nonlocal run_called, continue_called
+            if getattr(options, "resume", None):
+                continue_called = True
+            else:
+                run_called = True
+            return self._fake_conversation([self._system_init(), self._result()])
+
+        with patch("aion.agent.query", side_effect=mock_query):
+            await runner._handle_message(msg)
+
+        assert run_called
+        assert not continue_called
+
+    @pytest.mark.asyncio
+    async def test_second_message_uses_continue(self, runner):
+        """Second message within window should use continue_session()."""
+        msg1 = GatewayMessage(text="hello", sender_id="u1", chat_id="c1", platform="telegram")
+        msg2 = GatewayMessage(text="follow up", sender_id="u1", chat_id="c1", platform="telegram")
+
+        call_log = []
+
+        def mock_query(prompt, options):
+            has_resume = getattr(options, "resume", None) is not None
+            call_log.append({"prompt": prompt, "resume": has_resume})
+            return self._fake_conversation([self._system_init(), self._result()])
+
+        with patch("aion.agent.query", side_effect=mock_query):
+            await runner._handle_message(msg1)
+            await runner._handle_message(msg2)
+
+        assert len(call_log) == 2
+        assert call_log[0]["resume"] is False  # First message: fresh
+        assert call_log[1]["resume"] is True   # Second message: continue
+
+    @pytest.mark.asyncio
+    async def test_clear_session_forces_fresh(self, runner):
+        """After clear_session, next message should start fresh."""
+        msg1 = GatewayMessage(text="hello", sender_id="u1", chat_id="c1", platform="telegram")
+        msg2 = GatewayMessage(text="new topic", sender_id="u1", chat_id="c1", platform="telegram")
+
+        call_log = []
+
+        def mock_query(prompt, options):
+            has_resume = getattr(options, "resume", None) is not None
+            call_log.append({"resume": has_resume})
+            return self._fake_conversation([self._system_init(), self._result()])
+
+        with patch("aion.agent.query", side_effect=mock_query):
+            await runner._handle_message(msg1)
+            runner.clear_session("telegram", "u1")
+            await runner._handle_message(msg2)
+
+        assert call_log[0]["resume"] is False
+        assert call_log[1]["resume"] is False  # Fresh after clear

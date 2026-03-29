@@ -17,7 +17,7 @@ from ..utils.ansi import strip_ansi
 
 from .base import GatewayAdapter, GatewayMessage
 from .config import GatewayConfig
-from .session import SessionSource, build_session_context_prompt
+from .session import SessionSource, SessionTracker, build_session_context_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ class GatewayRunner:
         self.adapters: list[GatewayAdapter] = []
         self._agent: Optional[AionAgent] = None
         self._shutdown_event = asyncio.Event()
+        self._session_tracker = SessionTracker()
 
     def _create_agent(self) -> AionAgent:
         """Create the shared AionAgent instance."""
@@ -42,49 +43,66 @@ class GatewayRunner:
         """Process an incoming message through the agent.
 
         Called by each adapter's on_message callback.
+        Uses SessionTracker to continue existing CC sessions when possible.
         Returns the agent's response text.
         """
         agent = self._create_agent()
 
-        # Build session context prompt
-        source = msg.metadata.get("source")
-        if not isinstance(source, SessionSource):
-            source = SessionSource(
-                platform=msg.platform,
-                user_id=msg.sender_id,
-                user_name=msg.sender_name,
-                chat_id=msg.chat_id,
-            )
+        # Check for active session within continuity window
+        active = self._session_tracker.get_active(msg.platform, msg.sender_id)
 
-        context_prompt = build_session_context_prompt(
-            source,
-            connected_platforms=self.gateway_config.connected_platforms,
-        )
-
-        # Build system prompt: preset + memory + session context
-        memory_block = agent.memory.system_prompt_block()
-        append_parts = []
-        if memory_block:
-            append_parts.append(memory_block)
-        append_parts.append(context_prompt)
-        append_text = "\n\n".join(append_parts)
-
-        # Collect the final result text from the agent stream
+        # Collect the final result text and session IDs from the agent stream
         result_text = ""
+        cc_session_id = None
+        aion_session_id = None
 
-        async for msg_dict in agent.run(
-            prompt=msg.text,
-            source=msg.platform,
-            user_id=msg.sender_id,
-        ):
-            if msg_dict.get("type") == "result":
-                result_text = msg_dict.get("result", "")
+        if active:
+            logger.info(
+                "Continuing session for %s:%s (cc=%s)",
+                msg.platform, msg.sender_id, active.cc_session_id[:8],
+            )
+            async for msg_dict in agent.continue_session(
+                prompt=msg.text,
+                cc_session_id=active.cc_session_id,
+                source=msg.platform,
+                user_id=msg.sender_id,
+            ):
+                if msg_dict.get("type") == "system" and msg_dict.get("subtype") == "init":
+                    cc_session_id = msg_dict.get("session_id")
+                if msg_dict.get("type") == "result":
+                    result_text = msg_dict.get("result", "")
+                    if msg_dict.get("session_id"):
+                        cc_session_id = msg_dict["session_id"]
+        else:
+            async for msg_dict in agent.run(
+                prompt=msg.text,
+                source=msg.platform,
+                user_id=msg.sender_id,
+            ):
+                if msg_dict.get("type") == "system" and msg_dict.get("subtype") == "init":
+                    cc_session_id = msg_dict.get("session_id")
+                if msg_dict.get("type") == "result":
+                    result_text = msg_dict.get("result", "")
+                    if msg_dict.get("session_id"):
+                        cc_session_id = msg_dict["session_id"]
+
+        # Update session tracker with the CC session ID for future continuity
+        if cc_session_id:
+            recent = agent.sessions.recent_sessions(limit=1)
+            aion_session_id = recent[0]["id"] if recent else ""
+            self._session_tracker.update(
+                msg.platform, msg.sender_id, cc_session_id, aion_session_id,
+            )
 
         # Strip ANSI escape codes from CC output
         if result_text:
             result_text = strip_ansi(result_text)
 
         return result_text
+
+    def clear_session(self, platform: str, user_id: str) -> None:
+        """Clear active session for a user (called by /new command)."""
+        self._session_tracker.clear(platform, user_id)
 
     def _setup_adapters(self) -> None:
         """Instantiate adapters based on config."""
