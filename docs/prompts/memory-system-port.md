@@ -1,4 +1,4 @@
-# Memory System Port — Hermes → Aion
+# Memory System — Extending Hermes Patterns in Aion
 
 ## Goal
 
@@ -36,7 +36,7 @@ async def complete(prompt: str, system: str = "") -> Optional[str]:
     return result_text
 ```
 
-**Context compression is NOT needed** — the SDK handles its own context compaction automatically (emits `compact_boundary` system messages). We do NOT port Hermes's ContextCompressor. The SDK is the brain; we don't second-guess it.
+**Context compression** — the SDK handles basic compaction (emits `compact_boundary` system messages), but Hermes's 676-LOC ContextCompressor has structured summaries, tool pair sanitization, head/tail protection, and iterative updates that go well beyond the SDK's built-in handling. Evaluate whether to port Hermes's compressor based on dogfood experience.
 
 ## Reference: Hermes Source Files
 

@@ -37,7 +37,7 @@ Aion has ~13% of Hermes's memory system code. The ported `store.py` is a clean e
 | Read action (in tool dispatch) | ✅ | ❌ | Hermes tool dispatch supports "read" implicitly via schema |
 | Tool schema (OpenAI function calling) | ✅ (full schema + registry) | ❌ | Hermes has complete MEMORY_SCHEMA dict |
 | Tool registry integration | ✅ | ❌ | Hermes registers in tools.registry |
-| Configurable memory_dir | ❌ (hardcoded HERMES_HOME) | ✅ (constructor param) | Aion is more flexible |
+| Configurable memory_dir | ✅ (HERMES_HOME env var) | ✅ (constructor param) | Both configurable, different patterns |
 | **State Store (SQLite + FTS5)** | | | |
 | SQLite WAL mode | ✅ | ✅ | |
 | Schema versioning + migrations | ✅ (v1→v6, 6 migrations) | ✅ (v1 only) | Hermes has battle-tested migration system |
@@ -241,9 +241,9 @@ based on Aion's prompt assembly needs.
 
 ## 5. Key Architectural Differences
 
-1. **Hermes hardcodes paths** via `get_hermes_home()` → Aion uses constructor params (better)
+1. **Hermes uses env-var-based paths** via `get_hermes_home()` → Aion uses constructor params (different pattern, not better)
 2. **Hermes uses a tool registry** pattern → Aion may have different tool dispatch
-3. **Hermes state store is a monolith** (1274 LOC) → Aion could split into sessions.py + search.py + migrations.py
+3. **Hermes state store is a single file** (1274 LOC, battle-tested) → Aion splits into sessions.py + search.py + migrations.py (more files, less proven)
 4. **Hermes uses `isolation_level=None`** (manual txn management) → Aion uses default SQLite behavior
 5. **Hermes has 6 schema versions** with incremental migrations → Aion starts fresh at v1
 

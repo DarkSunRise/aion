@@ -82,13 +82,13 @@ options = ClaudeAgentOptions(
 
 | Repo | Path | What to steal |
 |------|------|---------------|
-| Hermes | ~/dev/hermes-agent | Gateway adapters (13 platforms, battle-tested) |
+| Hermes | ~/.hermes/hermes-agent | Python. Gateway (13 platforms), memory (bounded md + SQLite+FTS5), skills, cron, tools, context compression. Aion's upstream — we extend/fork it, not replace it. |
 | claude-orchestra | ~/dev/claude-orchestra | SDK patterns, structured output, context management |
 | Oro | ~/dev/awo/packages/oro | Orchestration patterns, job queue design |
 
 Full analysis docs at `docs/analysis/`:
 - `hermes-inventory.md` — 67K LOC component inventory with portability tiers
-- `memory-comparison.md` — feature matrix hermes vs aion memory
+- `memory-comparison.md` — gap analysis: what Aion is missing vs Hermes memory
 - `orchestra-patterns.md` — SDK usage patterns (5 query() variants)
 - `aion-infra-libs-research.md` — infrastructure library verdicts
 - `aion-integration-libs-research.md` — integration library verdicts

@@ -129,7 +129,7 @@
 ## Code Quality Notes
 
 - Memory store has robust file locking (fcntl), atomic writes (tempfile + os.replace), injection scanning
-- Sessions use WAL mode, FTS5, schema versioning — production-ready
+- Sessions use WAL mode, FTS5, schema versioning — functional but missing Hermes's thread safety, write contention handling, and FTS5 sanitization
 - Config supports env var interpolation (`${VAR}`) — good for secrets
 - Agent properly streams from SDK, handles errors, tracks costs
 - Redaction covers 13 secret patterns with compiled regexes

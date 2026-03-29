@@ -259,4 +259,4 @@ The gateway adapter pattern (already scaffolded) is correct. Each adapter should
 3. Pass to `AionAgent.run()`
 4. Stream responses back through platform-specific send methods
 
-This matches what Hermes does but in Python, and is the right architecture for Aion.
+This matches what Hermes does (Hermes is also Python), and is the right architecture for Aion.

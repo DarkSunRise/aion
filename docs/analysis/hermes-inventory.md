@@ -1,7 +1,7 @@
 # Hermes Agent — Reusable Component Inventory
 
 > Generated from `~/dev/hermes-agent` (v0.4.0, ~579 Python files)
-> Focus: components portable to Aion (claude-agent-sdk wrapper)
+> Focus: understanding Hermes architecture. Aion extends Hermes (Python, same ecosystem) — not a replacement.
 
 ---
 
@@ -320,7 +320,10 @@ Standalone (no internal deps):
 
 ---
 
-## 10. Recommended Extraction Strategy for Aion
+## 10. Hermes Components Relevant to Aion Extension
+
+> NOTE: Aion extends Hermes, not replaces it. These are components to
+> understand deeply and potentially fork/customize, not rebrand.
 
 1. **Package `aion-tools-core`** (~5K LOC): registry, toolsets, approval, interrupt, fuzzy_match, patch_parser, file_operations, ansi_strip, url_safety, redact, atomic writes, debug_helpers, env_passthrough
 2. **Package `aion-memory`** (~2.3K LOC): memory_tool (MEMORY.md/USER.md stores), hermes_state (SQLite FTS5 sessions), checkpoint_manager

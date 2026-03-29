@@ -1,4 +1,4 @@
-# Hermes → Aion Migration Workplan
+# Aion Development Workplan — Building on Hermes
 
 > Generated: 2026-03-29
 > Source: ~/dev/hermes-agent (67K LOC, v0.4.0)
@@ -7,7 +7,7 @@
 ## Architecture Decision
 
 Aion wraps `claude-agent-sdk` — Claude Code handles tools, terminal, files, browser natively.
-What Aion needs from Hermes is the **gateway layer** (messaging platform adapters) and supporting infrastructure.
+What Aion extends from Hermes: **gateway layer** (plus memory, skills, tools, context compression) (messaging platform adapters) and supporting infrastructure.
 
 We do NOT port: tool registry, file_operations, fuzzy_match, patch_parser, approval system, execution environments, browser tools, web tools — Claude Code provides all of these.
 

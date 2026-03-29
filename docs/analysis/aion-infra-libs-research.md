@@ -10,7 +10,7 @@
 |------|------|----------|-------|
 | **claude-orchestra** | TS (44K LOC) | better-sqlite3 (raw), commander, chalk, zod, ora, simple-git | Minimal deps, raw SQLite |
 | **oro (ouroboros)** | TS | drizzle-orm + better-sqlite3, bullmq + ioredis, pino, hono, croner, zod, dockerode | Full orchestrator, structured logging, job queue |
-| **awo** | TS monorepo | Contains oro, hermes-fork, gateway, dashboard | Workspace orchestrator |
+| **awo** | TS monorepo | Contains oro (TS), gateway, dashboard. hermes-fork is Python (Hermes is Python). | Workspace orchestrator |
 
 ---
 

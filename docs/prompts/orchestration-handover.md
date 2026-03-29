@@ -121,7 +121,7 @@ Session prompts live in `docs/prompts/`:
 
 | Repo | Path | What to steal |
 |------|------|---------------|
-| Hermes | ~/dev/hermes-agent | Gateway adapters (13 platforms), process mgmt |
+| Hermes | ~/.hermes/hermes-agent | Python. Gateway (13 platforms), memory (bounded md + SQLite+FTS5), skills, cron, tools, context compression, process mgmt. Aion's upstream. |
 | claude-orchestra | ~/dev/claude-orchestra | SDK patterns, structured output, workplan runner |
 | Oro | ~/dev/awo/packages/oro | Orchestration, job queue patterns |
 
