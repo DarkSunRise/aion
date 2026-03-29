@@ -25,20 +25,24 @@ from .memory.sessions import SessionDB
 
 
 def _print_message(msg: dict):
-    """Print a message dict to stdout."""
+    """Print a message dict to stdout.
+
+    Only prints the final result text (from ResultMessage), not intermediate
+    assistant messages which contain tool-use chatter like "Let me check...".
+    """
     msg_type = msg.get("type", "")
 
-    if msg_type == "assistant" and "content" in msg:
-        print(msg["content"])
-    elif msg_type == "result":
+    if msg_type == "result":
         if msg.get("is_error"):
             print(f"\n[ERROR] {msg.get('result', 'Unknown error')}", file=sys.stderr)
         else:
-            # Don't re-print result text — it's already printed via assistant messages
+            result_text = msg.get("result", "")
             cost = msg.get("cost_usd")
             turns = msg.get("num_turns")
             if cost is not None:
-                print(f"\n[{turns} turns, ${cost:.4f}]", file=sys.stderr)
+                print(f"[{turns} turns, ${cost:.4f}]", file=sys.stderr)
+            if result_text:
+                print(result_text)
     elif msg_type == "rate_limit_event":
         info = msg.get("rate_limit_info", {})
         status = info.get("status", "unknown")
@@ -76,15 +80,15 @@ def _print_sessions_table(sessions: list):
         print("No sessions found.")
         return
 
-    print(f"  {'ID':<9}{'TITLE':<23}{'SOURCE':<8}{'AGE':<7}{'MSGS':>5}  {'COST':>6}")
+    print(f"  {'ID':<9}{'TITLE':<40}{'SOURCE':<8}{'AGE':<7}{'MSGS':>5}  {'COST':>6}")
     for s in sessions:
         sid = s["id"][:4] + ".."
-        title = (s.get("title") or "(untitled)")[:22]
+        title = (s.get("title") or "(untitled)")[:39]
         source = (s.get("source") or "?")[:7]
         age = _format_age(s.get("started_at"))
         msgs = s.get("message_count", 0)
         cost = _format_cost(s.get("cost_usd"))
-        print(f"  {sid:<9}{title:<23}{source:<8}{age:<7}{msgs:>5}  {cost:>6}")
+        print(f"  {sid:<9}{title:<40}{source:<8}{age:<7}{msgs:>5}  {cost:>6}")
 
 
 def _print_search_results(results: list):
@@ -216,7 +220,9 @@ async def _run_interactive(cwd: str, config, resume_session_id=None):
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build the argument parser (exposed for testing)."""
+    from . import __version__
     parser = argparse.ArgumentParser(description="Aion — Anthropic-native AI agent")
+    parser.add_argument("-v", "--version", action="version", version=f"aion {__version__}")
     parser.add_argument("prompt", nargs="?", help="One-shot prompt (omit for interactive mode)")
     parser.add_argument("--cwd", default=".", help="Working directory")
     parser.add_argument("--gateway", help="Start gateway (telegram, discord, slack)")
@@ -291,6 +297,13 @@ def main():
             print("Error: No sessions to continue", file=sys.stderr)
             sys.exit(1)
         resume_session_id = recent[0]["id"]
+
+    # If stdin is piped (not a TTY) and no prompt arg, read from stdin
+    if not args.prompt and not sys.stdin.isatty():
+        piped = sys.stdin.read().strip()
+        if piped:
+            asyncio.run(_run_oneshot(piped, cwd, config, resume_session_id))
+            return
 
     if args.prompt:
         asyncio.run(_run_oneshot(args.prompt, cwd, config, resume_session_id))
