@@ -439,8 +439,8 @@ class AionAgent:
                        "Be specific and descriptive. No quotes or punctuation at the end.",
             )
             return title_result.title if title_result else None
-        except Exception:
-            logger.debug("Title generation failed", exc_info=True)
+        except Exception as e:
+            logger.warning("Title generation failed: %s", e)
             return None
 
     def search_sessions(self, query_text: str, limit: int = 3) -> list:
