@@ -1,35 +1,52 @@
 # Aion — Handover & Roadmap
 
 > Last updated: 2026-03-29
-> Version: 0.2.0 | 2,261 LOC source | 1,669 LOC tests | 123 passing
+> Version: 0.3.0 | 3,814 LOC source | 258 tests passing
+> Relationship: Extends Hermes (Python) — modernized brain (claude-agent-sdk) for Hermes body (gateway, skills, cron)
 > Repo: https://github.com/DarkSunRise/aion
 
 ## What Aion Is
 
 Subscription-native AI agent built on `claude-agent-sdk` (Python). Thin orchestration shell: memory + gateway + session tracking on top of Claude Code SDK. Uses the user's existing `claude` CLI auth — no API key needed. ALL LLM calls (main agent AND auxiliary) go through `sdk.query()`.
 
-## What Exists (v0.2.0)
+## What Exists (v0.3.0)
 
 ```
-src/aion/                    2,261 LOC
-├── __init__.py          5   version 0.2.0, exports AionAgent/AionConfig
-├── agent.py           371   wraps query() — system_prompt preset, all msg types,
-│                            compaction tracking, session continuation, token tracking
-├── cli.py             293   argparse — one-shot, REPL, --resume/--continue/--model/
-│                            --sessions/--search, /commands in REPL
-├── config.py          143   dataclasses + YAML + ${ENV} interpolation
-├── llm.py              46   auxiliary LLM via query() — sonnet, 1 turn, $0.05 budget
-├── redact.py           43   13 compiled regex patterns for secret redaction
+src/aion/                    3,814 LOC
+├── __init__.py              version 0.3.0, exports AionAgent/AionConfig
+├── agent.py           ~400  wraps query() — system_prompt preset, all msg types,
+│                            compaction tracking, session continuation, token tracking,
+│                            SDK hooks, external MCP server support
+├── cli.py             ~300  argparse — one-shot, REPL, --resume/--continue/--model/
+│                            --sessions/--search, --gateway, /commands in REPL
+├── config.py          ~150  dataclasses + YAML + ${ENV} interpolation + mcp_servers
+├── hooks.py           ~120  SDK lifecycle hooks (Stop, Notification, PreCompact,
+│                            PreToolUse, PostToolUse, Subagent*) + gateway notify callback
+├── log.py              ~60  structlog config — JSON in gateway, colored in CLI
+├── llm.py              ~90  aux LLM via query() — sonnet + complete_structured() + Pydantic
+├── schemas.py          ~30  Pydantic v2 models — SessionTitle, SessionSummary, SearchResult
+├── redact.py           ~43  13 compiled regex patterns for secret redaction
+├── utils/
+│   └── ansi.py         ~50  strip ANSI escape codes from CC output
 ├── memory/
 │   ├── store.py       293   bounded MEMORY.md + USER.md, fcntl locking, injection scan
-│   ├── sessions.py    767   SQLite+FTS5, thread-safe, write contention retry,
-│   │                        schema migrations v1→v2, FTS5 sanitization, WAL
-│   └── search.py      293   LLM-powered session search via SDK query()
-├── gateway/                 scaffolded, empty
-└── tools/                   scaffolded, empty
+│   ├── sessions.py    767   SQLite+FTS5, thread-safe, write contention retry, WAL
+│   └── search.py      ~300  LLM-powered session search via complete_structured()
+├── gateway/
+│   ├── base.py        ~120  abstract GatewayAdapter + GatewayMessage
+│   ├── config.py      ~100  GatewayConfig, TelegramConfig, SlackConfig + allowlists
+│   ├── runner.py      ~250  adapter lifecycle, message→agent→response, signal handling
+│   ├── session.py     ~140  SessionSource, context prompt builder, SessionTracker (30min continuity)
+│   └── adapters/
+│       ├── telegram.py ~200 python-telegram-bot v20+ polling, /start, /new, allowlist
+│       └── slack.py    ~220 slack-bolt Socket Mode, thread replies, mention detection
+└── tools/
+    ├── mcp_tools.py   ~200  7 in-process MCP tools (memory CRUD + session list/search/messages)
+    └── server.py       ~30  create_aion_mcp_server() factory
 
-tests/                     1,669 LOC, 123 passing
-deps: claude-agent-sdk, anthropic, aiohttp, python-telegram-bot, pyyaml
+tests/                     258 passing
+deps: claude-agent-sdk, anthropic, aiohttp, python-telegram-bot, slack-bolt, slack-sdk,
+      pyyaml, structlog, pydantic
 ```
 
 ## Architecture Decisions (locked in)
@@ -99,11 +116,10 @@ Full analysis docs at `docs/analysis/`:
 
 The SDK is richer than it looks. Key exports for upcoming phases:
 
-**Hooks** (ready to wire — no custom building needed):
-- `StopHookInput`, `NotificationHookInput`, `PreCompactHookInput`
-- `RateLimitEvent`, `PreToolUseHookInput`, `PostToolUseHookInput`
-- `SubagentStartHookInput`, `SubagentStopHookInput`
-- `PermissionRequestHookInput` + `PermissionResult`
+**Hooks** (WIRED in hooks.py):
+- Stop, Notification, PreCompact, PreToolUse, PostToolUse, SubagentStart, SubagentStop
+- Gateway notify callback for forwarding notifications to users
+- Fail-safe: falls back to no hooks if SDK raises on signature mismatch
 
 **Session management** (SDK-native — augments our SQLite):
 - `list_sessions`, `get_session_messages`, `get_session_info`
@@ -117,40 +133,29 @@ The SDK is richer than it looks. Key exports for upcoming phases:
 
 ## Roadmap
 
-### Phase 0: Dogfood (CRITICAL PATH — do this first)
+### Done (v0.3.0)
 
-Goal: structured output first (everything builds on it), then Telegram gateway.
+| Phase | Task | Status |
+|-------|------|--------|
+| 0.0 | Structured output — Pydantic schemas, complete_structured(), typed search | ✅ |
+| 0.1 | Telegram + Slack gateway — adapters, runner, CLI --gateway, ANSI strip | ✅ |
+| 0.2 | MCP tools — 7 in-process tools (memory CRUD + sessions) | ✅ |
+| 1.1 | structlog — JSON in gateway, colored in CLI, log.py | ✅ |
+| 1.3 | SDK hooks — 7 lifecycle hooks + gateway notify callback | ✅ |
+| 2.1 | MCP client — external servers via config.yaml | ✅ |
+| 2.2 | MCP server — Aion memory/search as MCP tools | ✅ |
+| 3.1 | Slack adapter — slack-bolt Socket Mode | ✅ |
+| — | Gateway session continuity — 30min window, /new command | ✅ |
 
-| # | Task | Files | Est. LOC | Session Prompt |
-|---|------|-------|----------|----------------|
-| 0.0 | **Structured output** — Pydantic schemas, `complete_structured()` in llm.py, update search.py to use typed results. Foundation for all LLM calls. | schemas.py, llm.py, search.py | ~200 new | `docs/prompts/phase0-structured-output.md` |
-| 0.1 | **Telegram Gateway** — base class, session context, config, adapter, runner, ANSI strip, CLI wire, tests. | gateway/*, utils/ansi.py, cli.py | ~1330 new | `docs/prompts/phase2-telegram-gateway.md` |
-| 0.2 | **pyproject.toml cleanup** — add structlog+mcp to core deps, drop gemini optional, add slack optional extra. | pyproject.toml | ~10 | bundled with 0.1 |
+### Remaining (needs dogfood validation)
 
-### Phase 1: Self-Iteration Polish
-
-Only after dogfood works. Priorities reordered by what dogfood reveals.
-
-| # | Task | Files | Est. LOC | Blocked by |
-|---|------|-------|----------|------------|
-| 1.1 | **structlog integration** — replace stdlib logging. JSON in gateway, colored in CLI. | all *.py | ~50 changed | nothing |
-| 1.2 | **Structured output** — Pydantic schemas for aux calls (summaries, titles). | agent.py, llm.py, schemas.py | ~100 new | nothing |
-| 1.3 | **SDK hooks** — wire StopHook, NotificationHook, PreCompact, RateLimit. | agent.py | ~80 | nothing |
-| 1.4 | **Completion callbacks** — gateway subscribes to session events. | agent.py, gateway/base.py | ~60 | 1.3 |
-| 1.5 | **Rate limit handling** — backoff + notify user on gateway. | agent.py | ~40 | 1.3 |
-
-### Phase 2: MCP Integration
-
-| # | Task | Files | Est. LOC |
-|---|------|-------|----------|
-| 2.1 | **MCP client** — connect to external MCP servers via config.yaml. Pass to SDK via `mcp_servers`. | tools/mcp_bridge.py, config.py | ~150 |
-| 2.2 | **MCP server** — expose Aion's memory/search as MCP tools. | tools/mcp_server.py | ~100 |
-
-### Phase 3: Slack Gateway (optional)
-
-| # | Task | Files | Est. LOC |
-|---|------|-------|----------|
-| 3.1 | **Slack adapter** — slack-bolt, Socket Mode + webhook. | gateway/adapters/slack.py | ~300 |
+| # | Task | Notes |
+|---|------|-------|
+| D.1 | **Dogfood** — actually run `aion --gateway telegram` with real bot token | Highest priority — real usage reveals real bugs |
+| D.2 | **Streaming display** — show progress in CLI/gateway (typing indicators) | Quality of life for gateway users |
+| D.3 | **delegate_task** — subagent spawning via SDK | Uses SubagentStart/Stop hooks already wired |
+| D.4 | **PermissionRequest hook** — handle permission prompts in gateway | Currently only works in CLI mode |
+| D.5 | **Context compression evaluation** — test SDK compaction vs Hermes's 676-LOC compressor | May need Hermes's compressor for long sessions |
 
 ---
 
