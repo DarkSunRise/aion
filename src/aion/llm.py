@@ -5,11 +5,14 @@ Thin wrapper around query() for lightweight, single-turn completions
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Type, TypeVar
 
+from pydantic import BaseModel
 from claude_agent_sdk import ClaudeAgentOptions, query
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T", bound=BaseModel)
 
 
 async def complete(
@@ -43,4 +46,43 @@ async def complete(
         return result_text
     except Exception:
         logger.warning("Auxiliary LLM call failed", exc_info=True)
+        return None
+
+
+async def complete_structured(
+    prompt: str,
+    schema: Type[T],
+    system: str = "",
+    model: str = "claude-sonnet-4-20250514",
+) -> Optional[T]:
+    """LLM call that returns a validated Pydantic model.
+
+    Uses SDK's output_format for guaranteed schema compliance.
+    Falls back to parsing result text if structured_output is missing.
+    Returns None on error (same contract as complete()).
+    """
+    full_prompt = f"{system}\n\n{prompt}" if system else prompt
+    try:
+        result = None
+        async for msg in query(
+            prompt=full_prompt,
+            options=ClaudeAgentOptions(
+                model=model,
+                max_turns=1,
+                max_budget_usd=0.05,
+                permission_mode="bypassPermissions",
+                allowed_tools=[],
+                output_format={
+                    "type": "json_schema",
+                    "schema": schema.model_json_schema(),
+                },
+            ),
+        ):
+            if hasattr(msg, "structured_output") and msg.structured_output:
+                result = schema.model_validate(msg.structured_output)
+            elif hasattr(msg, "result") and msg.result:
+                result = schema.model_validate_json(msg.result)
+        return result
+    except Exception:
+        logger.warning("Structured LLM call failed", exc_info=True)
         return None

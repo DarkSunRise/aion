@@ -108,9 +108,10 @@ def _truncate_around_matches(
 
 async def _summarize_session(
     conversation_text: str, query: str, session_meta: Dict[str, Any]
-) -> Optional[str]:
+) -> Optional["SessionSummary"]:
     """Summarize a single session conversation focused on the search query."""
-    from aion.llm import complete
+    from aion.llm import complete_structured
+    from aion.schemas import SessionSummary
 
     system_prompt = (
         "You are reviewing a past conversation transcript to help recall what happened. "
@@ -121,7 +122,8 @@ async def _summarize_session(
         "4. Any specific commands, files, URLs, or technical details that were important\n"
         "5. Anything left unresolved or notable\n\n"
         "Be thorough but concise. Preserve specific details (commands, paths, error messages) "
-        "that would be useful to recall. Write in past tense as a factual recap."
+        "that would be useful to recall. Write in past tense as a factual recap.\n\n"
+        "Rate relevance to the search topic from 0.0 (unrelated) to 1.0 (directly about it)."
     )
 
     source = session_meta.get("source", "unknown")
@@ -135,7 +137,7 @@ async def _summarize_session(
         f"Summarize this conversation with focus on: {query}"
     )
 
-    return await complete(prompt, system=system_prompt)
+    return await complete_structured(prompt, SessionSummary, system=system_prompt)
 
 
 def _resolve_to_parent(db: SessionDB, session_id: str) -> str:
@@ -281,7 +283,9 @@ async def search_sessions(
                 "session_id": session_id,
                 "when": _format_timestamp(match_info.get("session_started")),
                 "source": match_info.get("source", "unknown"),
-                "summary": result,
+                "title": result.title,
+                "summary": result.summary,
+                "relevance": result.relevance,
             })
 
     return json.dumps({

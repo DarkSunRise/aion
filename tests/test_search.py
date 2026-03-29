@@ -14,6 +14,7 @@ from aion.memory.search import (
     _truncate_around_matches,
     _resolve_to_parent,
 )
+from aion.schemas import SessionSummary
 
 
 @pytest.fixture
@@ -116,15 +117,21 @@ class TestSearchWithLLM:
     async def test_search_with_mock_llm(self, db):
         _seed_sessions(db)
 
-        async def mock_complete(prompt, system="", **kwargs):
-            return "Summary: discussed kubernetes deployment using kubectl."
+        async def mock_structured(prompt, schema, system="", **kwargs):
+            return SessionSummary(
+                title="Kubernetes Deployment",
+                summary="Discussed kubernetes deployment using kubectl.",
+                relevance=0.9,
+            )
 
-        with patch("aion.llm.complete", side_effect=mock_complete):
+        with patch("aion.llm.complete_structured", side_effect=mock_structured):
             result = json.loads(await search_sessions(db, "kubernetes"))
 
         assert result["success"] is True
         assert result["count"] >= 1
         assert "kubernetes" in result["results"][0]["summary"].lower()
+        assert result["results"][0]["title"] == "Kubernetes Deployment"
+        assert result["results"][0]["relevance"] == 0.9
 
     @pytest.mark.asyncio
     async def test_search_no_matches(self, db):
@@ -137,10 +144,12 @@ class TestSearchWithLLM:
     async def test_search_excludes_current_session(self, db):
         _seed_sessions(db)
 
-        async def mock_complete(prompt, system="", **kwargs):
-            return "summary"
+        async def mock_structured(prompt, schema, system="", **kwargs):
+            return SessionSummary(
+                title="Summary", summary="summary", relevance=0.5
+            )
 
-        with patch("aion.llm.complete", side_effect=mock_complete):
+        with patch("aion.llm.complete_structured", side_effect=mock_structured):
             result = json.loads(
                 await search_sessions(db, "kubernetes", current_session_id="s1")
             )
@@ -157,10 +166,12 @@ class TestSearchWithLLM:
         db.create_session("child", source="cli", parent_session_id="parent")
         db.add_message("child", "assistant", "deployment to kubernetes cluster complete")
 
-        async def mock_complete(prompt, system="", **kwargs):
-            return "deployed to k8s"
+        async def mock_structured(prompt, schema, system="", **kwargs):
+            return SessionSummary(
+                title="K8s Deploy", summary="deployed to k8s", relevance=0.8
+            )
 
-        with patch("aion.llm.complete", side_effect=mock_complete):
+        with patch("aion.llm.complete_structured", side_effect=mock_structured):
             result = json.loads(await search_sessions(db, "kubernetes"))
 
         if result["count"] > 0:
@@ -175,17 +186,21 @@ class TestSearchWithLLM:
 
         call_count = 0
 
-        async def mock_complete(prompt, system="", **kwargs):
+        async def mock_structured(prompt, schema, system="", **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 raise RuntimeError("LLM error")
-            return "summary of docker session"
+            return SessionSummary(
+                title="Docker Session",
+                summary="summary of docker session",
+                relevance=0.7,
+            )
 
         # Add another docker-related message to s1 so both sessions match
         db.add_message("s1", "user", "docker container networking")
 
-        with patch("aion.llm.complete", side_effect=mock_complete):
+        with patch("aion.llm.complete_structured", side_effect=mock_structured):
             result = json.loads(await search_sessions(db, "docker"))
 
         assert result["success"] is True
@@ -203,10 +218,12 @@ class TestLimits:
             db.create_session(sid, source="cli")
             db.add_message(sid, "user", f"topic alpha discussion {i}")
 
-        async def mock_complete(prompt, system="", **kwargs):
-            return "summary"
+        async def mock_structured(prompt, schema, system="", **kwargs):
+            return SessionSummary(
+                title="Alpha", summary="summary", relevance=0.5
+            )
 
-        with patch("aion.llm.complete", side_effect=mock_complete):
+        with patch("aion.llm.complete_structured", side_effect=mock_structured):
             result = json.loads(await search_sessions(db, "alpha", limit=10))
 
         assert result["count"] <= 5
