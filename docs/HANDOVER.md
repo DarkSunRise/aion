@@ -1,7 +1,7 @@
 # Aion — Handover & Roadmap
 
-> Last updated: 2026-03-29
-> Version: 0.3.0 | 3,814 LOC source | 258 tests passing
+> Last updated: 2026-03-30
+> Version: 0.3.0 | ~3,900 LOC source | 258 tests passing
 > Relationship: Extends Hermes (Python) — modernized brain (claude-agent-sdk) for Hermes body (gateway, skills, cron)
 > Repo: https://github.com/DarkSunRise/aion
 
@@ -147,11 +147,23 @@ The SDK is richer than it looks. Key exports for upcoming phases:
 | 3.1 | Slack adapter — slack-bolt Socket Mode | ✅ |
 | — | Gateway session continuity — 30min window, /new command | ✅ |
 
-### Remaining (needs dogfood validation)
+### Dogfood Fixes (v0.3.1 — 2026-03-30)
+
+| Fix | Description |
+|-----|-------------|
+| Clean output | Only final result text printed, intermediate assistant chatter suppressed |
+| --version | Added `-v`/`--version` flag |
+| Piped stdin | Non-TTY stdin treated as one-shot instead of REPL |
+| Title column | Widened from 22 to 39 chars in session listing |
+| Memory routing | System prompt instructs agent to use Aion MCP memory tools, not CC built-in |
+| Search dedup | Search results deduplicated by session (best match per session) |
+| Title gen logging | Failure logging upgraded from debug to warning |
+
+### Remaining
 
 | # | Task | Notes |
 |---|------|-------|
-| D.1 | **Dogfood** — actually run `aion --gateway telegram` with real bot token | Highest priority — real usage reveals real bugs |
+| D.1 | **Telegram gateway** — add bot token to config, run with real users | Next priority |
 | D.2 | **Streaming display** — show progress in CLI/gateway (typing indicators) | Quality of life for gateway users |
 | D.3 | **delegate_task** — subagent spawning via SDK | Uses SubagentStart/Stop hooks already wired |
 | D.4 | **PermissionRequest hook** — handle permission prompts in gateway | Currently only works in CLI mode |
