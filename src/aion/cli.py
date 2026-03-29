@@ -14,6 +14,7 @@ Usage:
 
 import asyncio
 import argparse
+import logging
 import sys
 import time
 from pathlib import Path
@@ -241,8 +242,15 @@ def main():
         config.model = args.model
 
     if args.gateway:
-        print(f"Gateway mode: {args.gateway} (not yet implemented)")
-        sys.exit(1)
+        from .gateway.runner import start_gateway
+        logging_level = logging.INFO
+        logging.basicConfig(
+            level=logging_level,
+            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
+        asyncio.run(start_gateway(config))
+        return
 
     # --sessions: list and exit
     if args.sessions:
