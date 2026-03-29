@@ -9,8 +9,6 @@ Responsibilities:
 5. Handle memory tool calls intercepted from the stream
 """
 
-import asyncio
-import json
 import logging
 import uuid
 from pathlib import Path
@@ -60,6 +58,7 @@ class AionAgent:
         resume_session_id: Optional[str] = None,
         max_turns: Optional[int] = None,
         mcp_servers: Optional[dict] = None,
+        model: Optional[str] = None,
     ) -> AsyncIterator[dict]:
         """
         Run a conversation turn. Yields message dicts as they stream from the SDK.
@@ -72,14 +71,23 @@ class AionAgent:
             resume_session_id: Aion session ID to resume (looks up CC session ID)
             max_turns: Override max turns
             mcp_servers: Additional MCP servers to connect
+            model: Override model (takes precedence over config.model)
         """
         session_id = str(uuid.uuid4())
-        self.sessions.create_session(session_id, source, self.config.model, user_id)
+        effective_model = model or self.config.model
+        self.sessions.create_session(session_id, source, effective_model, user_id)
         self.sessions.add_message(session_id, "user", prompt)
 
-        # Build system prompt append with memory
+        # Build system prompt with CC preset + memory append
         memory_block = self.memory.system_prompt_block()
-        append_prompt = memory_block if memory_block else None
+        system_prompt = {
+            "type": "preset",
+            "preset": "claude_code",
+            "append": memory_block,
+        } if memory_block else {
+            "type": "preset",
+            "preset": "claude_code",
+        }
 
         # Resolve CC session ID for resume
         cc_session_id = None
@@ -89,11 +97,15 @@ class AionAgent:
         # Build options
         options = ClaudeAgentOptions(
             max_turns=max_turns or self.config.max_turns,
-            append_system_prompt=append_prompt,
+            system_prompt=system_prompt,
             permission_mode=self.config.permission_mode,
             cwd=cwd or str(Path.cwd()),
-            session_id=cc_session_id,
+            model=effective_model,
         )
+
+        # Resume existing CC session
+        if cc_session_id:
+            options.resume = cc_session_id
 
         # Add MCP servers if provided
         if mcp_servers:
@@ -103,16 +115,46 @@ class AionAgent:
         result_text = ""
         result_session_id = None
         cost_usd = None
+        stop_reason = None
+        usage = {}
 
         try:
             async for message in query(prompt=prompt, options=options):
                 msg_dict = self._message_to_dict(message)
 
+                # Track system init for CC session ID
+                if msg_dict.get("type") == "system":
+                    if msg_dict.get("subtype") == "init":
+                        result_session_id = msg_dict.get("session_id")
+                    elif msg_dict.get("subtype") == "compact_boundary":
+                        logger.info(
+                            "Context compaction in session %s (cc=%s)",
+                            session_id, result_session_id,
+                        )
+                        # Create child session linked to parent
+                        child_id = str(uuid.uuid4())
+                        self.sessions.create_session(
+                            child_id, source, effective_model, user_id,
+                            parent_session_id=session_id,
+                        )
+
                 # Track result metadata
                 if msg_dict.get("type") == "result":
                     result_text = msg_dict.get("result", "")
-                    result_session_id = msg_dict.get("session_id")
+                    # Prefer session_id from result, fallback to init
+                    if msg_dict.get("session_id"):
+                        result_session_id = msg_dict["session_id"]
                     cost_usd = msg_dict.get("cost_usd")
+                    stop_reason = msg_dict.get("stop_reason")
+                    usage = msg_dict.get("usage", {})
+
+                # Log rate limit events
+                if msg_dict.get("type") == "rate_limit_event":
+                    logger.warning(
+                        "Rate limit: %s (resets at %s)",
+                        msg_dict.get("message", ""),
+                        msg_dict.get("resets_at", "unknown"),
+                    )
 
                 # Redact secrets if audit enabled
                 if self.config.audit.redact_secrets and "content" in msg_dict:
@@ -122,6 +164,7 @@ class AionAgent:
 
         except Exception as e:
             logger.error("Agent SDK error: %s", e)
+            stop_reason = "error"
             yield {"type": "error", "error": str(e)}
 
         finally:
@@ -129,39 +172,193 @@ class AionAgent:
             if result_text:
                 self.sessions.add_message(session_id, "assistant", result_text)
 
+            # Log usage details
+            if usage:
+                logger.info(
+                    "Session %s usage: %s, cost=$%.4f",
+                    session_id[:8], usage, cost_usd or 0,
+                )
+
             # End session with CC session ID for future resume
             self.sessions.end_session(
                 session_id,
                 cc_session_id=result_session_id,
                 cost_usd=cost_usd,
+                end_reason=stop_reason,
+            )
+
+    async def continue_session(
+        self,
+        prompt: str,
+        cc_session_id: str,
+        source: str = "cli",
+        user_id: Optional[str] = None,
+        cwd: Optional[str] = None,
+        max_turns: Optional[int] = None,
+        model: Optional[str] = None,
+    ) -> AsyncIterator[dict]:
+        """Continue an existing CC session.
+
+        Uses resume=cc_session_id to pick up where the previous session left off.
+        This is for within-process continuation — the CC SDK maintains the
+        conversation context from the previous session.
+        """
+        session_id = str(uuid.uuid4())
+        effective_model = model or self.config.model
+        self.sessions.create_session(session_id, source, effective_model, user_id)
+        self.sessions.add_message(session_id, "user", prompt)
+
+        # Build options with resume
+        memory_block = self.memory.system_prompt_block()
+        system_prompt = {
+            "type": "preset",
+            "preset": "claude_code",
+            "append": memory_block,
+        } if memory_block else {
+            "type": "preset",
+            "preset": "claude_code",
+        }
+
+        options = ClaudeAgentOptions(
+            max_turns=max_turns or self.config.max_turns,
+            system_prompt=system_prompt,
+            permission_mode=self.config.permission_mode,
+            cwd=cwd or str(Path.cwd()),
+            model=effective_model,
+            resume=cc_session_id,
+        )
+
+        result_text = ""
+        new_cc_session_id = None
+        cost_usd = None
+        stop_reason = None
+
+        try:
+            async for message in query(prompt=prompt, options=options):
+                msg_dict = self._message_to_dict(message)
+
+                if msg_dict.get("type") == "system" and msg_dict.get("subtype") == "init":
+                    new_cc_session_id = msg_dict.get("session_id")
+
+                if msg_dict.get("type") == "result":
+                    result_text = msg_dict.get("result", "")
+                    if msg_dict.get("session_id"):
+                        new_cc_session_id = msg_dict["session_id"]
+                    cost_usd = msg_dict.get("cost_usd")
+                    stop_reason = msg_dict.get("stop_reason")
+
+                if self.config.audit.redact_secrets and "content" in msg_dict:
+                    msg_dict["content"] = redact_secrets(msg_dict["content"])
+
+                yield msg_dict
+
+        except Exception as e:
+            logger.error("Agent SDK error (continue): %s", e)
+            stop_reason = "error"
+            yield {"type": "error", "error": str(e)}
+
+        finally:
+            if result_text:
+                self.sessions.add_message(session_id, "assistant", result_text)
+
+            self.sessions.end_session(
+                session_id,
+                cc_session_id=new_cc_session_id or cc_session_id,
+                cost_usd=cost_usd,
+                end_reason=stop_reason,
             )
 
     def _message_to_dict(self, message) -> dict:
-        """Convert SDK message to a plain dict."""
-        result = {"type": getattr(message, "type", "unknown")}
+        """Convert SDK message to a plain dict.
 
-        if hasattr(message, "content"):
-            # AssistantMessage
+        Handles all SDK message types:
+        - SystemMessage: init (session_id, model, tools), compact_boundary
+        - AssistantMessage: text, tool_use, thinking blocks
+        - UserMessage: tool results
+        - ResultMessage: session_id, cost, usage, stop_reason, num_turns
+        - StreamEvent: pass through for streaming display
+        - RateLimitEvent: rate limit info
+        """
+        msg_type = getattr(message, "type", "unknown")
+        result = {"type": msg_type}
+
+        if msg_type == "system":
+            result["subtype"] = getattr(message, "subtype", None)
+            if result["subtype"] == "init":
+                result["session_id"] = getattr(message, "session_id", None)
+                result["model"] = getattr(message, "model", None)
+                result["tools"] = getattr(message, "tools", [])
+            # compact_boundary has no extra fields — subtype is sufficient
+
+        elif msg_type == "assistant":
             content_parts = []
-            for block in message.content:
-                if hasattr(block, "text"):
+            tool_uses = []
+            thinking = []
+            for block in getattr(message, "content", []):
+                if hasattr(block, "thinking"):
+                    thinking.append(block.thinking)
+                elif hasattr(block, "text"):
                     content_parts.append(block.text)
                 elif hasattr(block, "name"):
-                    result["tool_use"] = {"name": block.name, "input": getattr(block, "input", {})}
+                    tool_uses.append({
+                        "name": block.name,
+                        "input": getattr(block, "input", {}),
+                        "id": getattr(block, "id", None),
+                    })
             if content_parts:
                 result["content"] = "\n".join(content_parts)
+            if tool_uses:
+                result["tool_uses"] = tool_uses
+            if thinking:
+                result["thinking"] = thinking
 
-        if hasattr(message, "result"):
-            # ResultMessage
-            result["result"] = message.result
+        elif msg_type == "user":
+            # Tool result messages
+            tool_results = []
+            for block in getattr(message, "content", []):
+                if hasattr(block, "tool_use_id"):
+                    tool_results.append({
+                        "tool_use_id": block.tool_use_id,
+                        "content": getattr(block, "content", None),
+                        "is_error": getattr(block, "is_error", False),
+                    })
+            if tool_results:
+                result["tool_results"] = tool_results
+
+        elif msg_type == "result":
+            result["result"] = getattr(message, "result", "")
+            result["subtype"] = getattr(message, "subtype", None)
             result["session_id"] = getattr(message, "session_id", None)
-            result["cost_usd"] = getattr(message, "cost_usd", None)
+            result["cost_usd"] = getattr(message, "total_cost_usd", None)
             result["num_turns"] = getattr(message, "num_turns", None)
+            result["duration_api_ms"] = getattr(message, "duration_api_ms", None)
+            result["stop_reason"] = getattr(message, "stop_reason", None)
             result["is_error"] = getattr(message, "is_error", False)
+            # Usage breakdown
+            raw_usage = getattr(message, "usage", None)
+            if raw_usage and isinstance(raw_usage, dict):
+                result["usage"] = raw_usage
+            elif raw_usage:
+                result["usage"] = {
+                    "input_tokens": getattr(raw_usage, "input_tokens", 0),
+                    "output_tokens": getattr(raw_usage, "output_tokens", 0),
+                    "cache_read": getattr(raw_usage, "cache_read_input_tokens", 0),
+                    "cache_write": getattr(raw_usage, "cache_creation_input_tokens", 0),
+                }
 
-        if hasattr(message, "tools"):
-            # SystemMessage
-            result["tools"] = message.tools
+        elif msg_type == "stream_event":
+            result["event"] = getattr(message, "event", None)
+            result["data"] = getattr(message, "data", None)
+
+        elif msg_type == "rate_limit_event":
+            result["message"] = getattr(message, "message", "")
+            result["resets_at"] = getattr(message, "resets_at", None)
+            rate_info = getattr(message, "rate_limit_info", None)
+            if rate_info:
+                result["rate_limit_info"] = {
+                    "status": getattr(rate_info, "status", None),
+                    "utilization": getattr(rate_info, "utilization", None),
+                }
 
         return result
 
