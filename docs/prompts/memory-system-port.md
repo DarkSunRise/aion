@@ -4,72 +4,73 @@
 
 Port Hermes's battle-tested memory infrastructure into Aion. When done:
 1. `sessions.py` is hardened (thread safety, write contention, FTS5 sanitization, schema migrations, richer fields)
-2. New `src/aion/llm.py` provides optional Anthropic API client for auxiliary LLM calls
+2. New `src/aion/llm.py` provides auxiliary LLM calls via the same claude-agent-sdk
 3. New `src/aion/memory/search.py` provides LLM-powered session search
-4. New `src/aion/agent/compressor.py` provides context compression
-5. All new code has tests
-6. All 16 existing tests still pass
+4. All new code has tests
+5. All 16 existing tests still pass
 
 ## Architecture Constraint
 
-Aion wraps `claude-agent-sdk` — Claude Code is the brain. Auxiliary LLM calls (search summaries, compression, title gen) use a two-tier strategy:
+Aion wraps `claude-agent-sdk`. ALL LLM calls — main agent AND auxiliary — go through `claude_agent_sdk.query()`. The SDK handles auth via the user's existing `claude` CLI login. No API key needed. One path.
 
-**Tier 1 (default, subscription-native):** `claude -p "prompt"` subprocess.
-Uses the user's existing `claude` CLI auth — no API key needed. Heavier (spawns CLI process) but ALWAYS available if `claude` is installed. This is the whole point of Aion being subscription-native.
+For auxiliary calls (search summaries, title gen), use the same SDK with constrained options:
 
-**Tier 2 (fast path):** `anthropic` SDK directly.
-If `ANTHROPIC_API_KEY` env var is set, use the SDK for faster/cheaper calls. The `anthropic` library is already a transitive dep of `claude-agent-sdk`.
+```python
+from claude_agent_sdk import query, ClaudeAgentOptions
 
-Auxiliary calls MUST NEVER silently degrade. If `claude` CLI is available, all features work. Only if BOTH paths are unavailable (no API key AND no claude CLI) should features degrade, and that scenario should log a clear warning.
+async def complete(prompt: str, system: str = "") -> Optional[str]:
+    """Lightweight LLM call via claude-agent-sdk — no tools, 1 turn, tiny budget."""
+    full_prompt = f"{system}\n\n{prompt}" if system else prompt
+    result_text = None
+    async for msg in query(
+        prompt=full_prompt,
+        options=ClaudeAgentOptions(
+            model="claude-sonnet-4-20250514",
+            max_turns=1,
+            max_budget_usd=0.05,
+            permission_mode="bypassPermissions",
+        ),
+    ):
+        if hasattr(msg, "result"):
+            result_text = msg.result
+    return result_text
+```
+
+**Context compression is NOT needed** — the SDK handles its own context compaction automatically (emits `compact_boundary` system messages). We do NOT port Hermes's ContextCompressor. The SDK is the brain; we don't second-guess it.
 
 ## Reference: Hermes Source Files
 
 Read these files as reference before implementing. They are the battle-tested originals:
 - `/home/kostya/dev/hermes-agent/hermes_state.py` (1274 LOC) — SQLite state store
 - `/home/kostya/dev/hermes-agent/tools/session_search_tool.py` (497 LOC) — LLM search
-- `/home/kostya/dev/hermes-agent/agent/context_compressor.py` (676 LOC) — compression
 
-Do NOT copy them verbatim — adapt to Aion's architecture (constructor params, no hermes_constants, no tool registry).
+Also reference claude-orchestra's patterns:
+- `/tmp/orchestra-patterns.md` — how orchestra uses query() for lightweight calls
+
+Do NOT copy Hermes files verbatim — adapt to Aion's architecture (constructor params, no hermes_constants, no tool registry).
 
 ## Boundaries
 
 - Do NOT modify `src/aion/agent.py` — that's a separate task
-- Do NOT modify `src/aion/memory/store.py` — it's nearly complete (only add fsync if trivial)
-- Do NOT add new deps to pyproject.toml — `anthropic` is already available transitively
+- Do NOT modify `src/aion/memory/store.py` — it's nearly complete
+- Do NOT add new deps to pyproject.toml — claude-agent-sdk is sufficient
 - Do NOT implement gateway adapters — separate task
+- Do NOT implement a context compressor — the SDK handles compaction
 - All imports must use `from aion.` not `from hermes_`
 - Keep Aion's constructor-param pattern (no hardcoded paths, no singletons)
 
 ## Step-by-Step
 
-### Commit 1: `src/aion/llm.py` — Two-Tier LLM Client
+### Commit 1: `src/aion/llm.py` — Auxiliary LLM via SDK
 
-Create a thin wrapper with two backends:
+Create a thin module for lightweight LLM calls. All calls go through `claude_agent_sdk.query()` with constrained options (no tools, 1 turn, small budget).
 
-```python
-"""Two-tier LLM client for auxiliary calls.
+Implement:
+- `async def complete(prompt: str, system: str = "", model: str = "claude-sonnet-4-20250514", max_tokens: int = 1024) -> Optional[str]`
+  Uses `query()` with `max_turns=1`, `max_budget_usd=0.05`, `permission_mode="bypassPermissions"`. Iterates the async response, extracts `result` from ResultMessage.
+  On error, logs warning and returns None.
 
-Tier 1 (default): claude -p subprocess — uses subscription auth, no API key.
-Tier 2 (fast):    anthropic SDK — when ANTHROPIC_API_KEY is set.
-
-Used for: session search summaries, context compression, title generation.
-"""
-```
-
-**`complete(prompt, system, model, max_tokens) -> Optional[str]`**
-
-Logic:
-1. If `ANTHROPIC_API_KEY` is set → use `anthropic.Anthropic` SDK (fast path)
-2. Else if `claude` CLI is available (check with `shutil.which("claude")`) → use `subprocess.run(["claude", "-p", prompt], capture_output=True, text=True, timeout=60)`. Note: `-p` mode outputs just the text result. System prompt can be prepended to the user prompt. Model selection via `--model` flag if non-default.
-3. Else → log WARNING "No LLM backend available (no ANTHROPIC_API_KEY, no claude CLI)" and return None.
-
-Important implementation details:
-- Cache the backend detection at module level (check once)
-- For claude subprocess: strip ANSI escape codes from output (the `-p` flag can still emit them)
-- Timeout of 60s for subprocess calls
-- The `model` param maps to `--model` flag for subprocess, `model=` for SDK
-
-Test: `tests/test_llm.py` — test SDK path with mock, test subprocess path with mock, test fallback to None when both unavailable.
+Test: `tests/test_llm.py` — mock `claude_agent_sdk.query` to return a fake ResultMessage, verify complete() extracts text. Test error handling returns None.
 
 ### Commit 2: Harden `src/aion/memory/sessions.py`
 
@@ -116,49 +117,18 @@ Flow:
 2. Sanitize query via `db._sanitize_fts5_query()`
 3. FTS5 search → get matching sessions
 4. For each session, get messages, truncate around matches (100K char window)
-5. Summarize each session via `llm.complete()` (works via either SDK or subprocess)
-6. If `llm.complete()` returns None (both backends unavailable): return raw matches with snippets
-7. Exclude current_session_id from results
-8. Walk parent_session_id chains to find root sessions
+5. Summarize each session via `aion.llm.complete()` — uses SDK query() under the hood
+6. Exclude current_session_id from results
+7. Walk parent_session_id chains to find root sessions
 
 Use `aion.llm.complete()` for summaries. System prompt for summarization should ask for a focused summary of what was discussed/decided relevant to the search query.
 
-Test: `tests/test_search.py` — search with mock LLM, search without LLM (degraded), recent sessions mode.
+Test: `tests/test_search.py` — search with mock LLM, recent sessions mode, parent chain resolution.
 
-### Commit 4: `src/aion/agent/compressor.py` — Context Compression
-
-Port from `/home/kostya/dev/hermes-agent/agent/context_compressor.py`. Key features:
-
-```python
-class ContextCompressor:
-    def __init__(self, model: str, context_window: int, threshold: float = 0.7):
-        """
-        Args:
-            model: model name (for token estimation)
-            context_window: max context tokens
-            threshold: compress when usage > threshold (0.7 = 70%)
-        """
-    
-    def should_compress(self, current_tokens: int) -> bool: ...
-    def compress(self, messages: list, current_tokens: int = None) -> list: ...
-```
-
-Port these from Hermes:
-- Head/tail protection (keep first N + last M messages)
-- Token-budget tail protection (scale with context window)
-- Tool output pruning pre-pass (cheap, no LLM)
-- Structured summary generation via `aion.llm.complete()`
-- Tool call/result pair sanitization (never orphan a tool_call without result)
-- Boundary alignment (don't split tool_call/result groups)
-- Graceful degradation: if `llm.complete()` returns None (both backends unavailable), skip LLM summary and fall back to mechanical pruning only.
-
-Test: `tests/test_compressor.py` — compression triggers, head/tail protection, tool pair sanitization, no-LLM fallback.
-
-### Commit 5: Wire up and final tests
+### Commit 4: Wire up and final tests
 
 - Update `src/aion/memory/__init__.py` to re-export MemoryStore, SessionDB, search_sessions
-- Update `src/aion/agent/__init__.py` (create if needed)  
-- Add `src/aion/agent/compressor.py` to `__init__.py`
+- Create `src/aion/agent/__init__.py` if needed
 - Run full test suite: `uv run pytest tests/ -v`
 - Ensure all 16 original tests + all new tests pass
 
