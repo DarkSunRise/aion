@@ -9,30 +9,28 @@ Thin orchestration shell: memory + gateway + session tracking on top of CC SDK.
 
 ```
 src/aion/
+├── __init__.py        # Package root, version, exports
 ├── agent.py           # Core: wraps claude-agent-sdk query() with memory injection
-├── config.py          # Config loader (YAML + env interpolation)
-├── cli.py             # CLI entry point (one-shot + interactive)
-├── redact.py          # Secret redaction for audit safety
+├── cli.py             # CLI: one-shot, interactive REPL, session management
+├── config.py          # Config: YAML + env interpolation
+├── llm.py             # Auxiliary LLM: query() with sonnet, 1 turn, no tools
+├── redact.py          # Secret redaction (13 patterns)
 ├── memory/
-│   ├── store.py       # MemoryStore: bounded MEMORY.md + USER.md (from Hermes)
-│   └── sessions.py    # SessionDB: SQLite + FTS5 cross-session search
-├── gateway/
-│   ├── adapters/      # Platform adapters (telegram, discord, slack, etc.)
-│   └── __init__.py
-└── tools/             # Optional MCP tools (TTS, image-gen, etc.)
+│   ├── __init__.py    # Re-exports: MemoryStore, SessionDB, search_sessions
+│   ├── store.py       # Bounded MEMORY.md + USER.md (from Hermes)
+│   ├── sessions.py    # SQLite+FTS5: thread-safe, schema migrations, WAL
+│   └── search.py      # LLM-powered session search via SDK
+├── gateway/           # Platform adapters (TODO)
+│   └── adapters/      # telegram, discord, etc.
+└── tools/             # MCP tools (TODO)
 ```
 
 ## Key Design Decisions
 
-1. **Claude Agent SDK is the brain** — we don't implement an agent loop, tools, context
-   compression, or prompt caching. CC SDK does all of that.
-
-2. **Memory is injected via append_system_prompt** — frozen snapshot at session start,
-   writes update disk immediately but don't break prompt cache.
-
-3. **Sessions track CC session IDs** — enables resume across Aion restarts.
-
-4. **Anthropic-first** — optional Gemini for cheap vision/summarization via auxiliary config.
+1. **ALL LLM calls go through claude-agent-sdk query()** — subscription-native
+2. **Memory injected via system_prompt preset append** — frozen snapshot at session start
+3. **No context compressor** — SDK handles compaction automatically
+4. **Sessions hardened** — thread safety, write contention, FTS5 sanitization, schema migrations
 
 ## Dev Commands
 
