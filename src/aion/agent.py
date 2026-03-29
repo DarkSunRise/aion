@@ -21,6 +21,7 @@ from claude_agent_sdk import (
 )
 
 from .config import AionConfig
+from .hooks import AionHooks, NotifyCallback
 from .memory.store import MemoryStore
 from .memory.sessions import SessionDB
 from .redact import redact_secrets
@@ -39,7 +40,11 @@ class AionAgent:
             print(msg)
     """
 
-    def __init__(self, config: AionConfig):
+    def __init__(
+        self,
+        config: AionConfig,
+        notify_callback: Optional[NotifyCallback] = None,
+    ):
         self.config = config
 
         # Memory
@@ -56,6 +61,9 @@ class AionAgent:
 
         # In-process MCP server (memory + session tools)
         self._aion_mcp = create_aion_mcp_server(self.memory, self.sessions)
+
+        # SDK lifecycle hooks
+        self._hooks = AionHooks(notify_callback=notify_callback)
 
     async def run(
         self,
@@ -103,12 +111,19 @@ class AionAgent:
             cc_session_id = self.sessions.get_cc_session_id(resume_session_id)
 
         # Build options
+        try:
+            hooks_dict = self._hooks.build_hooks_dict()
+        except Exception as e:
+            logger.warning("Failed to build hooks, running without: %s", e)
+            hooks_dict = None
+
         options = ClaudeAgentOptions(
             max_turns=max_turns or self.config.max_turns,
             system_prompt=system_prompt,
             permission_mode=self.config.permission_mode,
             cwd=cwd or str(Path.cwd()),
             model=effective_model,
+            hooks=hooks_dict,
         )
 
         # Resume existing CC session
@@ -231,6 +246,12 @@ class AionAgent:
             "preset": "claude_code",
         }
 
+        try:
+            hooks_dict = self._hooks.build_hooks_dict()
+        except Exception as e:
+            logger.warning("Failed to build hooks, running without: %s", e)
+            hooks_dict = None
+
         options = ClaudeAgentOptions(
             max_turns=max_turns or self.config.max_turns,
             system_prompt=system_prompt,
@@ -239,6 +260,7 @@ class AionAgent:
             model=effective_model,
             resume=cc_session_id,
             mcp_servers={"aion": self._aion_mcp},
+            hooks=hooks_dict,
         )
 
         result_text = ""
