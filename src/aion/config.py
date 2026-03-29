@@ -89,6 +89,8 @@ def _interpolate_dict(d: dict) -> dict:
             result[k] = _interpolate_env(v)
         elif isinstance(v, dict):
             result[k] = _interpolate_dict(v)
+        elif isinstance(v, list):
+            result[k] = [_interpolate_env(item) if isinstance(item, str) else item for item in v]
         else:
             result[k] = v
     return result

@@ -107,6 +107,26 @@ class TestMcpServerConfig:
         finally:
             del os.environ["TEST_MCP_TOKEN"]
 
+    def test_env_interpolation_in_args_list(self, tmp_home):
+        """Env vars in list values (like args) should be interpolated."""
+        os.environ["TEST_MCP_PATH"] = "/home/testuser"
+        try:
+            config_data = {
+                "mcp_servers": {
+                    "filesystem": {
+                        "command": "npx",
+                        "args": ["-y", "@anthropic/mcp-fs", "${TEST_MCP_PATH}"],
+                    }
+                }
+            }
+            config_path = tmp_home / "config.yaml"
+            config_path.write_text(yaml.dump(config_data))
+
+            config = load_config(config_path)
+            assert config.mcp_servers["filesystem"]["args"][2] == "/home/testuser"
+        finally:
+            del os.environ["TEST_MCP_PATH"]
+
     def test_mcp_servers_empty_section(self, tmp_home):
         config_data = {"mcp_servers": {}}
         config_path = tmp_home / "config.yaml"
