@@ -95,46 +95,61 @@ Full analysis docs at `docs/analysis/`:
 
 ---
 
+## SDK Surface (key types for implementation)
+
+The SDK is richer than it looks. Key exports for upcoming phases:
+
+**Hooks** (ready to wire — no custom building needed):
+- `StopHookInput`, `NotificationHookInput`, `PreCompactHookInput`
+- `RateLimitEvent`, `PreToolUseHookInput`, `PostToolUseHookInput`
+- `SubagentStartHookInput`, `SubagentStopHookInput`
+- `PermissionRequestHookInput` + `PermissionResult`
+
+**Session management** (SDK-native — augments our SQLite):
+- `list_sessions`, `get_session_messages`, `get_session_info`
+- `fork_session`, `delete_session`, `rename_session`, `tag_session`
+
+**MCP** (SDK-native passthrough):
+- `McpSdkServerConfig`, `create_sdk_mcp_server`
+- Pass `mcp_servers=[]` to `ClaudeAgentOptions`
+
+---
+
 ## Roadmap
 
-### Phase 1: Foundation Polish (self-iteration ready)
+### Phase 0: Dogfood (CRITICAL PATH — do this first)
 
-| # | Task | Files | Est. LOC | Deps |
-|---|------|-------|----------|------|
-| 1.1 | **structlog integration** — replace stdlib logging across all modules. JSON output in gateway mode, colored dev output in CLI. Add structlog to deps. | all *.py | ~50 changed | structlog |
-| 1.2 | **Structured output support** — add `output_format` to agent.py, add Pydantic schemas for auxiliary calls (search summaries, titles). Update llm.py to use structured output. | agent.py, llm.py, new schemas.py | ~100 new | pydantic (transitive) |
-| 1.3 | **pyproject.toml cleanup** — add structlog+mcp to core deps, drop gemini optional, add slack optional extra. | pyproject.toml | ~10 | — |
+Goal: talk to Aion on Telegram. Everything else is polish.
 
-### Phase 2: Telegram Gateway
+| # | Task | Files | Est. LOC | Session Prompt |
+|---|------|-------|----------|----------------|
+| 0.1 | **Telegram Gateway** — base class, session context, config, adapter, runner, ANSI strip, CLI wire, tests. Single CC agent session. | gateway/*, utils/ansi.py, cli.py | ~1330 new | `docs/prompts/phase2-telegram-gateway.md` |
+| 0.2 | **pyproject.toml cleanup** — add structlog+mcp to core deps, drop gemini optional, add slack optional extra. | pyproject.toml | ~10 | bundled with 0.1 |
 
-| # | Task | Files | Est. LOC | Reference |
-|---|------|-------|----------|-----------|
-| 2.1 | **Gateway base class** — abstract adapter with normalize_message/send_response/start/stop. Port from Hermes `gateway/platforms/base.py` (1452 LOC) — simplify heavily (Aion doesn't need half of it). | gateway/base.py | ~300 | hermes base.py |
-| 2.2 | **Gateway config** — platform configs, allowlists, session routing. | gateway/config.py | ~150 | hermes gateway/config.py |
-| 2.3 | **Telegram adapter** — port from Hermes (1906 LOC). Message receive → agent.run() → send response. Voice, stickers, documents. | gateway/adapters/telegram.py | ~500 | hermes telegram.py |
-| 2.4 | **Gateway runner** — parse config, start adapters as asyncio tasks, graceful shutdown. Wire into CLI `aion --gateway`. | gateway/runner.py, cli.py | ~200 | new |
-| 2.5 | **ANSI stripping** — strip escape codes from CC output before sending to Telegram. | utils/ansi.py | ~50 | hermes ansi_strip.py |
+### Phase 1: Self-Iteration Polish
 
-### Phase 3: Hooks & Async Notifications
+Only after dogfood works. Priorities reordered by what dogfood reveals.
 
-| # | Task | Files | Est. LOC |
-|---|------|-------|----------|
-| 3.1 | **SDK hooks wiring** — use ClaudeAgentOptions.hooks for Stop, Notification, PreCompact, RateLimitEvent. Emit asyncio.Event on completion. | agent.py | ~80 |
-| 3.2 | **Completion callbacks** — register callbacks for session completion. Gateway adapters subscribe to get notified instead of polling. | agent.py, gateway/base.py | ~60 |
-| 3.3 | **Rate limit handling** — on RateLimitEvent, backoff and notify user on gateway. | agent.py | ~40 |
+| # | Task | Files | Est. LOC | Blocked by |
+|---|------|-------|----------|------------|
+| 1.1 | **structlog integration** — replace stdlib logging. JSON in gateway, colored in CLI. | all *.py | ~50 changed | nothing |
+| 1.2 | **Structured output** — Pydantic schemas for aux calls (summaries, titles). | agent.py, llm.py, schemas.py | ~100 new | nothing |
+| 1.3 | **SDK hooks** — wire StopHook, NotificationHook, PreCompact, RateLimit. | agent.py | ~80 | nothing |
+| 1.4 | **Completion callbacks** — gateway subscribes to session events. | agent.py, gateway/base.py | ~60 | 1.3 |
+| 1.5 | **Rate limit handling** — backoff + notify user on gateway. | agent.py | ~40 | 1.3 |
 
-### Phase 4: MCP Integration
+### Phase 2: MCP Integration
 
 | # | Task | Files | Est. LOC |
 |---|------|-------|----------|
-| 4.1 | **MCP client** — connect to external MCP servers defined in config.yaml. Pass to SDK via `mcp_servers` option. | tools/mcp_bridge.py, config.py | ~150 |
-| 4.2 | **MCP server** — expose Aion's memory/search as MCP tools for other agents. | tools/mcp_server.py | ~100 |
+| 2.1 | **MCP client** — connect to external MCP servers via config.yaml. Pass to SDK via `mcp_servers`. | tools/mcp_bridge.py, config.py | ~150 |
+| 2.2 | **MCP server** — expose Aion's memory/search as MCP tools. | tools/mcp_server.py | ~100 |
 
-### Phase 5: Slack Gateway (optional)
+### Phase 3: Slack Gateway (optional)
 
 | # | Task | Files | Est. LOC |
 |---|------|-------|----------|
-| 5.1 | **Slack adapter** — slack-bolt based. Socket Mode + webhook. | gateway/adapters/slack.py | ~300 |
+| 3.1 | **Slack adapter** — slack-bolt, Socket Mode + webhook. | gateway/adapters/slack.py | ~300 |
 
 ---
 
