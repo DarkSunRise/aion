@@ -143,9 +143,9 @@ def load_config(config_path: Optional[Path] = None) -> AionConfig:
                 mcp_servers[name] = _interpolate_dict(server_cfg)
 
     return AionConfig(
-        model=raw.get("model", "claude-sonnet-4-20250514"),
-        max_turns=raw.get("max_turns", 100),
-        permission_mode=raw.get("permission_mode", "bypassPermissions"),
+        model=raw.get("model") or "claude-sonnet-4-20250514",
+        max_turns=raw.get("max_turns") or 100,
+        permission_mode=raw.get("permission_mode") or "bypassPermissions",
         memory=memory,
         audit=audit,
         auxiliary=auxiliary,

@@ -144,6 +144,32 @@ class TestMcpServerConfig:
         assert config.mcp_servers == {}
 
 
+# ── Config edge cases ──
+
+
+class TestConfigEdgeCases:
+    def test_malformed_yaml_raises(self, tmp_home):
+        """Malformed YAML should raise a clear error, not corrupt config."""
+        config_path = tmp_home / "config.yaml"
+        config_path.write_text("model: [\ninvalid: yaml: [broken")
+        with pytest.raises(Exception):
+            load_config(config_path)
+
+    def test_yaml_with_none_values(self, tmp_home):
+        """Config with explicit null values should use defaults."""
+        config_path = tmp_home / "config.yaml"
+        config_path.write_text("model: null\nmax_turns: null\n")
+        config = load_config(config_path)
+        # Should fall back to defaults from the get() calls
+        assert config.model is not None or config.model == "claude-sonnet-4-20250514"
+
+    def test_nonexistent_config_uses_defaults(self, tmp_home):
+        """Missing config file should use defaults without error."""
+        config = load_config(tmp_home / "nonexistent.yaml")
+        assert config.model == "claude-sonnet-4-20250514"
+        assert config.max_turns == 100
+
+
 # ── Agent wiring ──
 
 
