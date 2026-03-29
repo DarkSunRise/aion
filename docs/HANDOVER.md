@@ -119,11 +119,12 @@ The SDK is richer than it looks. Key exports for upcoming phases:
 
 ### Phase 0: Dogfood (CRITICAL PATH — do this first)
 
-Goal: talk to Aion on Telegram. Everything else is polish.
+Goal: structured output first (everything builds on it), then Telegram gateway.
 
 | # | Task | Files | Est. LOC | Session Prompt |
 |---|------|-------|----------|----------------|
-| 0.1 | **Telegram Gateway** — base class, session context, config, adapter, runner, ANSI strip, CLI wire, tests. Single CC agent session. | gateway/*, utils/ansi.py, cli.py | ~1330 new | `docs/prompts/phase2-telegram-gateway.md` |
+| 0.0 | **Structured output** — Pydantic schemas, `complete_structured()` in llm.py, update search.py to use typed results. Foundation for all LLM calls. | schemas.py, llm.py, search.py | ~200 new | `docs/prompts/phase0-structured-output.md` |
+| 0.1 | **Telegram Gateway** — base class, session context, config, adapter, runner, ANSI strip, CLI wire, tests. | gateway/*, utils/ansi.py, cli.py | ~1330 new | `docs/prompts/phase2-telegram-gateway.md` |
 | 0.2 | **pyproject.toml cleanup** — add structlog+mcp to core deps, drop gemini optional, add slack optional extra. | pyproject.toml | ~10 | bundled with 0.1 |
 
 ### Phase 1: Self-Iteration Polish
