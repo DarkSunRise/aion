@@ -1,6 +1,6 @@
 [project]
 name = "aion"
-version = "0.2.0"
+version = "0.3.0"
 description = "Enterprise-hardened AI agent built on Anthropic's Claude Agent SDK"
 readme = "README.md"
 requires-python = ">=3.11"

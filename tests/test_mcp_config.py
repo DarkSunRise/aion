@@ -3,7 +3,7 @@
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import yaml
@@ -139,6 +139,7 @@ class TestMcpServerWiring:
             },
         )
         agent = AionAgent(config)
+        agent._generate_title = AsyncMock(return_value=None)
         captured = {}
 
         def mock_query(prompt, options):
@@ -164,6 +165,7 @@ class TestMcpServerWiring:
             },
         )
         agent = AionAgent(config)
+        agent._generate_title = AsyncMock(return_value=None)
         captured = {}
 
         def mock_query(prompt, options):
@@ -188,6 +190,7 @@ class TestMcpServerWiring:
             },
         )
         agent = AionAgent(config)
+        agent._generate_title = AsyncMock(return_value=None)
         captured = {}
 
         def mock_query(prompt, options):
@@ -210,6 +213,7 @@ class TestMcpServerWiring:
             audit=AuditConfig(redact_secrets=False),
         )
         agent = AionAgent(config)
+        agent._generate_title = AsyncMock(return_value=None)
         captured = {}
 
         def mock_query(prompt, options):

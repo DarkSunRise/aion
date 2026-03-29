@@ -208,11 +208,15 @@ class AionAgent:
                     session_id[:8], usage, cost_usd or 0,
                 )
 
+            # Generate title from the conversation
+            title = await self._generate_title(prompt, result_text)
+
             # End session with CC session ID for future resume
             self.sessions.end_session(
                 session_id,
                 cc_session_id=result_session_id,
                 cost_usd=cost_usd,
+                title=title,
                 end_reason=stop_reason,
             )
 
@@ -303,10 +307,13 @@ class AionAgent:
             if result_text:
                 self.sessions.add_message(session_id, "assistant", result_text)
 
+            title = await self._generate_title(prompt, result_text)
+
             self.sessions.end_session(
                 session_id,
                 cc_session_id=new_cc_session_id or cc_session_id,
                 cost_usd=cost_usd,
+                title=title,
                 end_reason=stop_reason,
             )
 
@@ -407,6 +414,31 @@ class AionAgent:
         # Unknown message type — log and pass through
         logger.debug("Unknown SDK message type: %s", type(message).__name__)
         return {"type": "unknown", "class": type(message).__name__}
+
+    async def _generate_title(self, prompt: str, result_text: str) -> Optional[str]:
+        """Generate a short title for the session using the aux LLM.
+
+        Returns None if generation fails (title is optional, never blocks).
+        """
+        if not prompt or not result_text:
+            return None
+        try:
+            from .llm import complete_structured
+            from .schemas import SessionTitle
+
+            # Use first 200 chars of each to keep aux call cheap
+            short_prompt = prompt[:200]
+            short_result = result_text[:200]
+            title_result = await complete_structured(
+                f"User: {short_prompt}\n\nAssistant: {short_result}",
+                SessionTitle,
+                system="Generate a short title (3-8 words) for this conversation. "
+                       "Be specific and descriptive. No quotes or punctuation at the end.",
+            )
+            return title_result.title if title_result else None
+        except Exception:
+            logger.debug("Title generation failed", exc_info=True)
+            return None
 
     def search_sessions(self, query_text: str, limit: int = 3) -> list:
         """Search past conversations."""

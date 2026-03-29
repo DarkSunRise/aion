@@ -46,7 +46,10 @@ def config(tmp_home):
 
 @pytest.fixture
 def agent(config):
-    return AionAgent(config)
+    a = AionAgent(config)
+    # Stub out title generation — it does an aux LLM call we don't want in tests
+    a._generate_title = AsyncMock(return_value=None)
+    return a
 
 
 # ── Helpers: fake SDK messages using real SDK classes ──

@@ -78,10 +78,22 @@ async def complete_structured(
                 },
             ),
         ):
-            if hasattr(msg, "structured_output") and msg.structured_output:
-                result = schema.model_validate(msg.structured_output)
-            elif hasattr(msg, "result") and msg.result:
-                result = schema.model_validate_json(msg.result)
+            # SDK implements structured output via a synthetic StructuredOutput tool call.
+            # The schema-validated data is in ToolUseBlock.input, not ResultMessage.structured_output.
+            if hasattr(msg, "content"):
+                for block in getattr(msg, "content", []):
+                    if (getattr(block, "name", None) == "StructuredOutput"
+                            and hasattr(block, "input") and block.input):
+                        result = schema.model_validate(block.input)
+            # Fallback: check ResultMessage.structured_output and .result
+            if result is None:
+                if hasattr(msg, "structured_output") and msg.structured_output:
+                    result = schema.model_validate(msg.structured_output)
+                elif hasattr(msg, "result") and msg.result:
+                    try:
+                        result = schema.model_validate_json(msg.result)
+                    except Exception:
+                        pass
         return result
     except Exception:
         logger.warning("Structured LLM call failed", exc_info=True)
