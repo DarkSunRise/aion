@@ -12,12 +12,15 @@ Port Hermes's battle-tested memory infrastructure into Aion. When done:
 
 ## Architecture Constraint
 
-Aion wraps `claude-agent-sdk` — Claude Code is the brain. The `anthropic` library is a TRANSITIVE dep (already installed via claude-agent-sdk). We use it OPTIONALLY for lightweight auxiliary calls:
-- Session search summarization (haiku)
-- Context compression summaries (haiku)  
-- Title generation (haiku)
+Aion wraps `claude-agent-sdk` — Claude Code is the brain. Auxiliary LLM calls (search summaries, compression, title gen) use a two-tier strategy:
 
-If no `ANTHROPIC_API_KEY` is set, these features degrade gracefully (no summaries, no compression, raw FTS results only).
+**Tier 1 (default, subscription-native):** `claude -p "prompt"` subprocess.
+Uses the user's existing `claude` CLI auth — no API key needed. Heavier (spawns CLI process) but ALWAYS available if `claude` is installed. This is the whole point of Aion being subscription-native.
+
+**Tier 2 (fast path):** `anthropic` SDK directly.
+If `ANTHROPIC_API_KEY` env var is set, use the SDK for faster/cheaper calls. The `anthropic` library is already a transitive dep of `claude-agent-sdk`.
+
+Auxiliary calls MUST NEVER silently degrade. If `claude` CLI is available, all features work. Only if BOTH paths are unavailable (no API key AND no claude CLI) should features degrade, and that scenario should log a clear warning.
 
 ## Reference: Hermes Source Files
 
@@ -39,63 +42,34 @@ Do NOT copy them verbatim — adapt to Aion's architecture (constructor params, 
 
 ## Step-by-Step
 
-### Commit 1: `src/aion/llm.py` — Optional Anthropic Client
+### Commit 1: `src/aion/llm.py` — Two-Tier LLM Client
 
-Create a thin wrapper:
+Create a thin wrapper with two backends:
 
 ```python
-"""Optional Anthropic API client for auxiliary LLM calls.
+"""Two-tier LLM client for auxiliary calls.
+
+Tier 1 (default): claude -p subprocess — uses subscription auth, no API key.
+Tier 2 (fast):    anthropic SDK — when ANTHROPIC_API_KEY is set.
 
 Used for: session search summaries, context compression, title generation.
-Falls back gracefully when ANTHROPIC_API_KEY is not set.
 """
-
-import os
-import logging
-from typing import Optional
-
-logger = logging.getLogger(__name__)
-
-_client = None
-_checked = False
-
-def get_client():
-    """Get anthropic.Anthropic client, or None if no API key."""
-    global _client, _checked
-    if _checked:
-        return _client
-    _checked = True
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        logger.debug("ANTHROPIC_API_KEY not set — auxiliary LLM features disabled")
-        return None
-    try:
-        import anthropic
-        _client = anthropic.Anthropic(api_key=api_key)
-        return _client
-    except Exception as e:
-        logger.warning("Failed to create Anthropic client: %s", e)
-        return None
-
-def complete(prompt: str, system: str = "", model: str = "claude-haiku-4-20250514",
-             max_tokens: int = 1024) -> Optional[str]:
-    """Simple completion. Returns None if client unavailable."""
-    client = get_client()
-    if not client:
-        return None
-    try:
-        messages = [{"role": "user", "content": prompt}]
-        resp = client.messages.create(
-            model=model, max_tokens=max_tokens, messages=messages,
-            system=system if system else anthropic.NOT_GIVEN,
-        )
-        return resp.content[0].text if resp.content else None
-    except Exception as e:
-        logger.warning("LLM completion failed: %s", e)
-        return None
 ```
 
-Test: `tests/test_llm.py` — test graceful None when no key, mock successful call.
+**`complete(prompt, system, model, max_tokens) -> Optional[str]`**
+
+Logic:
+1. If `ANTHROPIC_API_KEY` is set → use `anthropic.Anthropic` SDK (fast path)
+2. Else if `claude` CLI is available (check with `shutil.which("claude")`) → use `subprocess.run(["claude", "-p", prompt], capture_output=True, text=True, timeout=60)`. Note: `-p` mode outputs just the text result. System prompt can be prepended to the user prompt. Model selection via `--model` flag if non-default.
+3. Else → log WARNING "No LLM backend available (no ANTHROPIC_API_KEY, no claude CLI)" and return None.
+
+Important implementation details:
+- Cache the backend detection at module level (check once)
+- For claude subprocess: strip ANSI escape codes from output (the `-p` flag can still emit them)
+- Timeout of 60s for subprocess calls
+- The `model` param maps to `--model` flag for subprocess, `model=` for SDK
+
+Test: `tests/test_llm.py` — test SDK path with mock, test subprocess path with mock, test fallback to None when both unavailable.
 
 ### Commit 2: Harden `src/aion/memory/sessions.py`
 
@@ -142,8 +116,8 @@ Flow:
 2. Sanitize query via `db._sanitize_fts5_query()`
 3. FTS5 search → get matching sessions
 4. For each session, get messages, truncate around matches (100K char window)
-5. If LLM available (`llm.get_client()`): summarize each session in parallel with asyncio
-6. If no LLM: return raw matches with snippets (graceful degradation)
+5. Summarize each session via `llm.complete()` (works via either SDK or subprocess)
+6. If `llm.complete()` returns None (both backends unavailable): return raw matches with snippets
 7. Exclude current_session_id from results
 8. Walk parent_session_id chains to find root sessions
 
@@ -176,9 +150,7 @@ Port these from Hermes:
 - Structured summary generation via `aion.llm.complete()`
 - Tool call/result pair sanitization (never orphan a tool_call without result)
 - Boundary alignment (don't split tool_call/result groups)
-- Graceful degradation: if no LLM, just do tool output pruning + aggressive tail keeping
-
-If `aion.llm.complete()` returns None (no API key), skip LLM summary and fall back to mechanical pruning only.
+- Graceful degradation: if `llm.complete()` returns None (both backends unavailable), skip LLM summary and fall back to mechanical pruning only.
 
 Test: `tests/test_compressor.py` — compression triggers, head/tail protection, tool pair sanitization, no-LLM fallback.
 
