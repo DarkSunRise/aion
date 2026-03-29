@@ -1,7 +1,4 @@
-# Aion configuration example
-# Copy to ~/.aion/config.yaml and fill in your tokens.
-# Tokens support ${ENV_VAR} interpolation.
-
+# Aion v0.3.0 — ~/.aion/config.yaml
 model: claude-sonnet-4-20250514
 max_turns: 100
 permission_mode: bypassPermissions
@@ -10,19 +7,25 @@ memory:
   char_limit: 2200
   user_char_limit: 1375
 
-gateway:
-  telegram:
-    token: ${TELEGRAM_BOT_TOKEN}
-    allowed_users:
-      - "123456789"  # your telegram user ID
-
-  slack:
-    bot_token: ${SLACK_BOT_TOKEN}    # xoxb-...
-    app_token: ${SLACK_APP_TOKEN}    # xapp-...
-    allowed_channels:
-      - "C04ABC123"  # channel ID
-
 audit:
   enabled: true
   log_tool_calls: true
   redact_secrets: true
+
+# MCP servers (external tools the agent can use)
+# mcp_servers:
+#   filesystem:
+#     command: "npx"
+#     args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/kostya"]
+#   github:
+#     command: "uvx"
+#     args: ["mcp-server-github"]
+#     env:
+#       GITHUB_TOKEN: "${GITHUB_TOKEN}"
+
+# Gateway (for Telegram/Slack bot mode)
+# gateway:
+#   telegram:
+#     token: ${TELEGRAM_BOT_TOKEN}
+#     allowed_users:
+#       - "YOUR_TELEGRAM_USER_ID"
