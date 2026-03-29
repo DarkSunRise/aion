@@ -8,6 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from claude_agent_sdk import (
+    SystemMessage, AssistantMessage, UserMessage, ResultMessage, RateLimitEvent,
+)
+from claude_agent_sdk.types import (
+    TextBlock, ThinkingBlock, ToolUseBlock, ToolResultBlock, RateLimitInfo,
+)
+
 from aion.agent import AionAgent
 from aion.config import AionConfig, MemoryConfig, AuditConfig
 
@@ -32,7 +39,7 @@ def config(tmp_home):
         max_turns=10,
         permission_mode="bypassPermissions",
         memory=MemoryConfig(char_limit=2200, user_char_limit=1375),
-        audit=AuditConfig(enabled=True, log_tool_calls=True, redact_secrets=False),
+        audit=AuditConfig(enabled=True, log_tool_calls=True, redact_secrets=True),
         aion_home=tmp_home,
     )
 
@@ -42,38 +49,35 @@ def agent(config):
     return AionAgent(config)
 
 
-# ── Helpers: fake SDK messages ──
+# ── Helpers: fake SDK messages using real SDK classes ──
 
 
 def _system_init(session_id="cc-abc-123", model="claude-sonnet-4-20250514"):
-    return SimpleNamespace(
-        type="system",
+    return SystemMessage(
         subtype="init",
-        session_id=session_id,
-        model=model,
-        tools=["Read", "Write", "Bash"],
+        data={"session_id": session_id, "model": model, "tools": ["Read", "Write", "Bash"]},
     )
 
 
 def _system_compact():
-    return SimpleNamespace(type="system", subtype="compact_boundary")
+    return SystemMessage(subtype="compact_boundary", data={})
 
 
 def _assistant_text(text, thinking=None):
-    blocks = [SimpleNamespace(text=text)]
+    blocks = [TextBlock(text=text)]
     if thinking:
-        blocks.append(SimpleNamespace(thinking=thinking))
-    return SimpleNamespace(type="assistant", content=blocks)
+        blocks.append(ThinkingBlock(thinking=thinking, signature="sig"))
+    return AssistantMessage(content=blocks, model="claude-sonnet-4-20250514")
 
 
 def _assistant_tool_use(name, input_data, tool_id="tu-1"):
-    block = SimpleNamespace(name=name, input=input_data, id=tool_id)
-    return SimpleNamespace(type="assistant", content=[block])
+    block = ToolUseBlock(id=tool_id, name=name, input=input_data)
+    return AssistantMessage(content=[block], model="claude-sonnet-4-20250514")
 
 
 def _user_tool_result(tool_use_id, content, is_error=False):
-    block = SimpleNamespace(tool_use_id=tool_use_id, content=content, is_error=is_error)
-    return SimpleNamespace(type="user", content=[block])
+    block = ToolResultBlock(tool_use_id=tool_use_id, content=content, is_error=is_error)
+    return UserMessage(content=[block])
 
 
 def _result(
@@ -85,32 +89,23 @@ def _result(
     stop_reason="end_turn",
     usage=None,
 ):
-    return SimpleNamespace(
-        type="result",
+    return ResultMessage(
         subtype="success",
         result=result_text,
         session_id=session_id,
         total_cost_usd=cost,
         num_turns=num_turns,
+        duration_ms=duration_ms,
         duration_api_ms=duration_ms,
-        stop_reason=stop_reason,
         is_error=False,
+        stop_reason=stop_reason,
         usage=usage,
     )
 
 
-def _stream_event(event="delta", data="chunk"):
-    return SimpleNamespace(type="stream_event", event=event, data=data)
-
-
-def _rate_limit(message="Rate limited", resets_at="2025-01-01T00:00:00Z"):
-    info = SimpleNamespace(status="limited", utilization=0.95)
-    return SimpleNamespace(
-        type="rate_limit_event",
-        message=message,
-        resets_at=resets_at,
-        rate_limit_info=info,
-    )
+def _rate_limit(resets_at=1735689600):
+    info = RateLimitInfo(status="rejected", resets_at=resets_at, utilization=0.95)
+    return RateLimitEvent(rate_limit_info=info, uuid="rl-1", session_id="cc-abc-123")
 
 
 class _FakeConversation:
@@ -303,33 +298,13 @@ class TestMessageHandling:
         assert res["usage"]["cache_write"] == 100
 
     @pytest.mark.asyncio
-    async def test_stream_event(self, agent):
-        msgs = []
-
-        def mock_query(prompt, options):
-            return _FakeConversation([
-                _system_init(),
-                _stream_event("delta", "partial text"),
-                _result(),
-            ])
-
-        with patch("aion.agent.query", side_effect=mock_query):
-            async for m in agent.run("hi"):
-                msgs.append(m)
-
-        stream = msgs[1]
-        assert stream["type"] == "stream_event"
-        assert stream["event"] == "delta"
-        assert stream["data"] == "partial text"
-
-    @pytest.mark.asyncio
     async def test_rate_limit_event(self, agent):
         msgs = []
 
         def mock_query(prompt, options):
             return _FakeConversation([
                 _system_init(),
-                _rate_limit("slow down", "2025-06-01T00:00:00Z"),
+                _rate_limit(resets_at=1748736000),
                 _result(),
             ])
 
@@ -339,8 +314,8 @@ class TestMessageHandling:
 
         rl = msgs[1]
         assert rl["type"] == "rate_limit_event"
-        assert rl["message"] == "slow down"
-        assert rl["resets_at"] == "2025-06-01T00:00:00Z"
+        assert rl["rate_limit_info"]["status"] == "rejected"
+        assert rl["rate_limit_info"]["resets_at"] == 1748736000
         assert rl["rate_limit_info"]["utilization"] == 0.95
 
 
@@ -538,10 +513,7 @@ class TestRedaction:
         agent = AionAgent(config)
 
         def mock_query(prompt, options):
-            msg = SimpleNamespace(
-                type="assistant",
-                content=[SimpleNamespace(text="key is sk-ant-abcdefghijklmnopqrstuvwx")],
-            )
+            msg = _assistant_text("key is sk-ant-abcdefghijklmnopqrstuvwx")
             return _FakeConversation([_system_init(), msg, _result()])
 
         msgs = []

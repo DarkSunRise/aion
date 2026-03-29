@@ -14,7 +14,11 @@ import uuid
 from pathlib import Path
 from typing import AsyncIterator, Optional
 
-from claude_agent_sdk import query, ClaudeAgentOptions
+from claude_agent_sdk import (
+    query, ClaudeAgentOptions,
+    SystemMessage, AssistantMessage, UserMessage, ResultMessage,
+    RateLimitEvent,
+)
 
 from .config import AionConfig
 from .memory.store import MemoryStore
@@ -150,11 +154,13 @@ class AionAgent:
 
                 # Log rate limit events
                 if msg_dict.get("type") == "rate_limit_event":
-                    logger.warning(
-                        "Rate limit: %s (resets at %s)",
-                        msg_dict.get("message", ""),
-                        msg_dict.get("resets_at", "unknown"),
-                    )
+                    info = msg_dict.get("rate_limit_info", {})
+                    if info.get("status") != "allowed":
+                        logger.warning(
+                            "Rate limit: status=%s (resets at %s)",
+                            info.get("status", "?"),
+                            info.get("resets_at", "unknown"),
+                        )
 
                 # Redact secrets if audit enabled
                 if self.config.audit.redact_secrets and "content" in msg_dict:
@@ -271,35 +277,35 @@ class AionAgent:
     def _message_to_dict(self, message) -> dict:
         """Convert SDK message to a plain dict.
 
-        Handles all SDK message types:
-        - SystemMessage: init (session_id, model, tools), compact_boundary
-        - AssistantMessage: text, tool_use, thinking blocks
-        - UserMessage: tool results
-        - ResultMessage: session_id, cost, usage, stop_reason, num_turns
-        - StreamEvent: pass through for streaming display
-        - RateLimitEvent: rate limit info
+        Uses isinstance checks — SDK messages are typed classes, not dicts:
+        - SystemMessage: .subtype, .data (dict with session_id, model, tools)
+        - AssistantMessage: .content (list of TextBlock/ToolUseBlock/ThinkingBlock)
+        - UserMessage: .content (list of ToolResultBlock)
+        - ResultMessage: .result, .total_cost_usd, .num_turns, .session_id, etc.
+        - RateLimitEvent: .rate_limit_info
         """
-        msg_type = getattr(message, "type", "unknown")
-        result = {"type": msg_type}
+        if isinstance(message, SystemMessage):
+            data = getattr(message, "data", {}) or {}
+            subtype = getattr(message, "subtype", None)
+            result = {"type": "system", "subtype": subtype}
+            if subtype == "init":
+                result["session_id"] = data.get("session_id")
+                result["model"] = data.get("model")
+                result["tools"] = data.get("tools", [])
+            return result
 
-        if msg_type == "system":
-            result["subtype"] = getattr(message, "subtype", None)
-            if result["subtype"] == "init":
-                result["session_id"] = getattr(message, "session_id", None)
-                result["model"] = getattr(message, "model", None)
-                result["tools"] = getattr(message, "tools", [])
-            # compact_boundary has no extra fields — subtype is sufficient
-
-        elif msg_type == "assistant":
+        if isinstance(message, AssistantMessage):
+            result = {"type": "assistant"}
             content_parts = []
             tool_uses = []
             thinking = []
             for block in getattr(message, "content", []):
-                if hasattr(block, "thinking"):
-                    thinking.append(block.thinking)
-                elif hasattr(block, "text"):
+                block_type = type(block).__name__
+                if block_type == "ThinkingBlock" or hasattr(block, "thinking"):
+                    thinking.append(getattr(block, "thinking", str(block)))
+                elif block_type == "TextBlock" or hasattr(block, "text"):
                     content_parts.append(block.text)
-                elif hasattr(block, "name"):
+                elif block_type == "ToolUseBlock" or hasattr(block, "name"):
                     tool_uses.append({
                         "name": block.name,
                         "input": getattr(block, "input", {}),
@@ -311,9 +317,10 @@ class AionAgent:
                 result["tool_uses"] = tool_uses
             if thinking:
                 result["thinking"] = thinking
+            return result
 
-        elif msg_type == "user":
-            # Tool result messages
+        if isinstance(message, UserMessage):
+            result = {"type": "user"}
             tool_results = []
             for block in getattr(message, "content", []):
                 if hasattr(block, "tool_use_id"):
@@ -324,17 +331,20 @@ class AionAgent:
                     })
             if tool_results:
                 result["tool_results"] = tool_results
+            return result
 
-        elif msg_type == "result":
-            result["result"] = getattr(message, "result", "")
-            result["subtype"] = getattr(message, "subtype", None)
-            result["session_id"] = getattr(message, "session_id", None)
-            result["cost_usd"] = getattr(message, "total_cost_usd", None)
-            result["num_turns"] = getattr(message, "num_turns", None)
-            result["duration_api_ms"] = getattr(message, "duration_api_ms", None)
-            result["stop_reason"] = getattr(message, "stop_reason", None)
-            result["is_error"] = getattr(message, "is_error", False)
-            # Usage breakdown
+        if isinstance(message, ResultMessage):
+            result = {
+                "type": "result",
+                "result": getattr(message, "result", ""),
+                "subtype": getattr(message, "subtype", None),
+                "session_id": getattr(message, "session_id", None),
+                "cost_usd": getattr(message, "total_cost_usd", None),
+                "num_turns": getattr(message, "num_turns", None),
+                "duration_api_ms": getattr(message, "duration_api_ms", None),
+                "stop_reason": getattr(message, "stop_reason", None),
+                "is_error": getattr(message, "is_error", False),
+            }
             raw_usage = getattr(message, "usage", None)
             if raw_usage and isinstance(raw_usage, dict):
                 result["usage"] = raw_usage
@@ -345,22 +355,22 @@ class AionAgent:
                     "cache_read": getattr(raw_usage, "cache_read_input_tokens", 0),
                     "cache_write": getattr(raw_usage, "cache_creation_input_tokens", 0),
                 }
+            return result
 
-        elif msg_type == "stream_event":
-            result["event"] = getattr(message, "event", None)
-            result["data"] = getattr(message, "data", None)
-
-        elif msg_type == "rate_limit_event":
-            result["message"] = getattr(message, "message", "")
-            result["resets_at"] = getattr(message, "resets_at", None)
+        if isinstance(message, RateLimitEvent):
+            result = {"type": "rate_limit_event"}
             rate_info = getattr(message, "rate_limit_info", None)
             if rate_info:
                 result["rate_limit_info"] = {
                     "status": getattr(rate_info, "status", None),
+                    "resets_at": getattr(rate_info, "resets_at", None),
                     "utilization": getattr(rate_info, "utilization", None),
                 }
+            return result
 
-        return result
+        # Unknown message type — log and pass through
+        logger.debug("Unknown SDK message type: %s", type(message).__name__)
+        return {"type": "unknown", "class": type(message).__name__}
 
     def search_sessions(self, query_text: str, limit: int = 3) -> list:
         """Search past conversations."""

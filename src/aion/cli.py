@@ -34,13 +34,16 @@ def _print_message(msg: dict):
         if msg.get("is_error"):
             print(f"\n[ERROR] {msg.get('result', 'Unknown error')}", file=sys.stderr)
         else:
-            result = msg.get("result", "")
-            if result:
-                print(result)
+            # Don't re-print result text — it's already printed via assistant messages
             cost = msg.get("cost_usd")
             turns = msg.get("num_turns")
             if cost is not None:
                 print(f"\n[{turns} turns, ${cost:.4f}]", file=sys.stderr)
+    elif msg_type == "rate_limit_event":
+        info = msg.get("rate_limit_info", {})
+        status = info.get("status", "unknown")
+        if status != "allowed":
+            print(f"[Rate limit: {status}]", file=sys.stderr)
     elif msg_type == "error":
         print(f"[ERROR] {msg.get('error', 'Unknown')}", file=sys.stderr)
 
