@@ -22,7 +22,10 @@ src/aion/
 │   └── search.py      # LLM-powered session search via SDK
 ├── gateway/           # Platform adapters (TODO)
 │   └── adapters/      # telegram, discord, etc.
-└── tools/             # MCP tools (TODO)
+└── tools/
+    ├── __init__.py    # Re-exports: create_aion_tools, create_aion_mcp_server
+    ├── mcp_tools.py   # @tool definitions: memory + session wrappers
+    └── server.py      # create_aion_mcp_server() factory
 ```
 
 ## Key Design Decisions
@@ -45,6 +48,24 @@ uv run pytest tests/             # Run tests
 1. Create `src/aion/gateway/adapters/<platform>.py`
 2. Implement async message receive → agent.run() → send response
 3. Register in gateway runner
+
+## MCP Tools (available in every Aion session)
+
+Aion registers in-process MCP tools that give Claude persistent memory
+and session history. These tools are automatically available in every session
+(CLI + gateway) — no configuration needed.
+
+- **aion_memory_read** — read persistent memory ('memory' or 'user')
+- **aion_memory_add** — add entry to memory
+- **aion_memory_replace** — update a memory entry (substring match)
+- **aion_memory_remove** — delete a memory entry (substring match)
+- **aion_sessions_list** — list recent sessions with metadata
+- **aion_sessions_search** — FTS5 search across past sessions
+- **aion_session_messages** — get full conversation from a session (supports prefix)
+
+Tools are thin async wrappers around MemoryStore and SessionDB, bound via
+closure in `create_aion_tools()`. The MCP server is created in AionAgent.__init__
+and injected into every query()/continue_session() call.
 
 ## Adding an MCP Tool
 

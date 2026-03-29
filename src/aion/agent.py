@@ -24,6 +24,7 @@ from .config import AionConfig
 from .memory.store import MemoryStore
 from .memory.sessions import SessionDB
 from .redact import redact_secrets
+from .tools.server import create_aion_mcp_server
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,9 @@ class AionAgent:
         # Session DB
         self.sessions = SessionDB(config.aion_home / "state.db")
         self.sessions.connect()
+
+        # In-process MCP server (memory + session tools)
+        self._aion_mcp = create_aion_mcp_server(self.memory, self.sessions)
 
     async def run(
         self,
@@ -111,9 +115,11 @@ class AionAgent:
         if cc_session_id:
             options.resume = cc_session_id
 
-        # Add MCP servers if provided
+        # MCP servers: always include Aion tools, merge any additional
+        mcp = {"aion": self._aion_mcp}
         if mcp_servers:
-            options.mcp_servers = mcp_servers
+            mcp.update(mcp_servers)
+        options.mcp_servers = mcp
 
         # Stream from SDK
         result_text = ""
@@ -232,6 +238,7 @@ class AionAgent:
             cwd=cwd or str(Path.cwd()),
             model=effective_model,
             resume=cc_session_id,
+            mcp_servers={"aion": self._aion_mcp},
         )
 
         result_text = ""
