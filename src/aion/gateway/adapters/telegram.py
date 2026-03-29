@@ -6,9 +6,9 @@ Simplified from Hermes TelegramAdapter (~1900 LOC → ~250 LOC).
 """
 
 import asyncio
-import logging
 from typing import Optional
 
+import structlog
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -23,7 +23,7 @@ from ..base import GatewayAdapter, GatewayMessage
 from ..config import TelegramConfig
 from ..session import SessionSource
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class TelegramAdapter(GatewayAdapter):

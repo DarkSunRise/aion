@@ -7,9 +7,10 @@ graceful shutdown on SIGINT/SIGTERM.
 """
 
 import asyncio
-import logging
 import signal
 from typing import Optional
+
+import structlog
 
 from ..agent import AionAgent
 from ..config import AionConfig, load_config
@@ -19,7 +20,7 @@ from .base import GatewayAdapter, GatewayMessage
 from .config import GatewayConfig
 from .session import SessionSource, SessionTracker, build_session_context_prompt
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class GatewayRunner:

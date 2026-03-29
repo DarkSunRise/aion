@@ -4,12 +4,12 @@ Wires into claude-agent-sdk's hook system to log lifecycle events,
 forward notifications to gateway, and track rate limits.
 """
 
-import logging
 from typing import Any, Optional, Callable, Awaitable
 
+import structlog
 from claude_agent_sdk import HookMatcher
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Type for gateway notification callback
 NotifyCallback = Callable[[str, str], Awaitable[None]]  # (session_id, message) -> None

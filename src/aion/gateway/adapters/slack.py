@@ -6,10 +6,10 @@ Simplified from Hermes SlackAdapter.
 """
 
 import asyncio
-import logging
 import re
 from typing import Optional
 
+import structlog
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
@@ -17,7 +17,7 @@ from ..base import GatewayAdapter, GatewayMessage
 from ..config import SlackConfig
 from ..session import SessionSource
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class SlackAdapter(GatewayAdapter):

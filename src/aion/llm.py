@@ -4,13 +4,13 @@ Thin wrapper around query() for lightweight, single-turn completions
 (search summaries, title generation, etc.). No tools, 1 turn, small budget.
 """
 
-import logging
 from typing import Optional, Type, TypeVar
 
+import structlog
 from pydantic import BaseModel
 from claude_agent_sdk import ClaudeAgentOptions, query
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 

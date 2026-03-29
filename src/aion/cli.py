@@ -14,12 +14,12 @@ Usage:
 
 import asyncio
 import argparse
-import logging
 import sys
 import time
 from pathlib import Path
 
 from .config import load_config
+from .log import configure_logging
 from .agent import AionAgent
 from .memory.sessions import SessionDB
 
@@ -244,16 +244,14 @@ def main():
     if args.model:
         config.model = args.model
 
+    # Configure structured logging early
     if args.gateway:
         from .gateway.runner import start_gateway
-        logging_level = logging.INFO
-        logging.basicConfig(
-            level=logging_level,
-            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-            datefmt="%H:%M:%S",
-        )
+        configure_logging(json_output=True, level="INFO")
         asyncio.run(start_gateway(config))
         return
+
+    configure_logging(json_output=False, level="WARNING")
 
     # --sessions: list and exit
     if args.sessions:

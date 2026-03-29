@@ -9,11 +9,11 @@ Responsibilities:
 5. Handle memory tool calls intercepted from the stream
 """
 
-import logging
 import uuid
 from pathlib import Path
 from typing import AsyncIterator, Optional
 
+import structlog
 from claude_agent_sdk import (
     query, ClaudeAgentOptions,
     SystemMessage, AssistantMessage, UserMessage, ResultMessage,
@@ -27,7 +27,7 @@ from .memory.sessions import SessionDB
 from .redact import redact_secrets
 from .tools.server import create_aion_mcp_server
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class AionAgent:

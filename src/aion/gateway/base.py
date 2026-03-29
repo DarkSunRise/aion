@@ -5,13 +5,14 @@ All platform adapters (Telegram, Slack) inherit from this and implement
 the required methods. Simplified from Hermes BasePlatformAdapter.
 """
 
-import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Callable, Awaitable, Optional
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass
