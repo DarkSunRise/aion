@@ -1,17 +1,17 @@
-# Session Prompt: Phase 2 — Telegram Gateway
+# Session Prompt: Phase 0.1 — Telegram + Slack Gateway
 
 ## Goal
 
-Implement a working Telegram gateway so Aion can be reached via Telegram bot.
-User sends message on Telegram → Aion runs SDK query() → response sent back.
-This is the minimum viable dogfood: talk to your personal AI agent on Telegram.
+Implement working Telegram AND Slack gateways so Aion can be reached via both.
+User sends message → Aion runs SDK query() → response sent back.
+This is the minimum viable dogfood: talk to your personal AI agent on Telegram and Slack.
 
 ## Boundaries
 
 - Do NOT add structlog, structured output, or any Phase 1 items
-- Do NOT implement hooks (Phase 3) — just basic request/response
+- Do NOT implement hooks (Phase 1) — just basic request/response
 - Do NOT port media caching, sticker handling, voice transcription, or file uploads from Hermes
-- Do NOT add Discord, Slack, or any adapter besides Telegram + CLI
+- Do NOT add Discord, Matrix, or any adapter besides Telegram, Slack, and CLI
 - Do NOT change agent.py, cli.py, memory/, or tests for existing modules
 - Keep stdlib logging — do not add structlog
 - Tests MUST pass: `uv run python -m pytest tests/ -v`
@@ -24,11 +24,12 @@ src/aion/gateway/
 ├── __init__.py          # exports
 ├── base.py              # ~300 LOC — abstract GatewayAdapter
 ├── session.py           # ~130 LOC — SessionSource + context prompt builder
-├── config.py            # ~150 LOC — GatewayConfig, TelegramConfig, allowlist
+├── config.py            # ~200 LOC — GatewayConfig, TelegramConfig, SlackConfig, allowlist
 ├── runner.py            # ~200 LOC — start adapters, asyncio loop, graceful shutdown
 ├── adapters/
 │   ├── __init__.py
-│   └── telegram.py      # ~500 LOC — python-telegram-bot adapter
+│   ├── telegram.py      # ~500 LOC — python-telegram-bot adapter
+│   └── slack.py         # ~400 LOC — slack-bolt adapter (Socket Mode)
 src/aion/utils/
 ├── __init__.py
 └── ansi.py              # ~50 LOC — strip ANSI escape codes from CC output
@@ -39,8 +40,9 @@ src/aion/utils/
 Read these Hermes files for patterns (simplify heavily — Aion needs 10% of this):
 - ~/dev/hermes-agent/gateway/platforms/base.py (1452 LOC) → base.py (~300 LOC)
 - ~/dev/hermes-agent/gateway/platforms/telegram.py (1906 LOC) → telegram.py (~500 LOC)
+- ~/dev/hermes-agent/gateway/platforms/slack.py — Slack adapter patterns
 - ~/dev/hermes-agent/gateway/run.py (5889 LOC) → runner.py (~200 LOC)
-- ~/dev/hermes-agent/gateway/config.py (829 LOC) → config.py (~150 LOC)
+- ~/dev/hermes-agent/gateway/config.py (829 LOC) → config.py (~200 LOC)
 
 ## Step-by-Step
 
@@ -115,13 +117,21 @@ pattern but simplify — skip PII hashing, home channels, thread routing.
 class TelegramConfig:
     token: str              # BOT_TOKEN from env or config
     allowed_users: list[str] = field(default_factory=list)  # telegram user IDs
+
+@dataclass
+class SlackConfig:
+    bot_token: str          # xoxb-... for API calls
+    app_token: str          # xapp-... for Socket Mode
+    allowed_users: list[str] = field(default_factory=list)
+    allowed_channels: list[str] = field(default_factory=list)
     
 @dataclass  
 class GatewayConfig:
     telegram: Optional[TelegramConfig] = None
+    slack: Optional[SlackConfig] = None
 ```
 
-Load from ~/.aion/config.yaml under `gateway:` key. Support env vars for token.
+Load from ~/.aion/config.yaml under `gateway:` key. Support env vars for tokens.
 
 ### 6. Telegram adapter (src/aion/gateway/adapters/telegram.py)
 Use python-telegram-bot (already a dep). Simplified flow:
@@ -149,42 +159,91 @@ Handle gracefully:
 - Agent errors (send error message to user)
 - Long responses (split at paragraph boundaries, not mid-word)
 
-### 7. Gateway runner (src/aion/gateway/runner.py)
+### 7. Slack adapter (src/aion/gateway/adapters/slack.py)
+Use slack-bolt (add to deps). Use **Socket Mode** (no public URL needed, like Telegram polling).
+
+```
+User sends message in Slack →
+  1. Check allowed_users / allowed_channels (if configured)
+  2. Build SessionSource from Slack event (user_id, channel, thread_ts)
+  3. Build session context prompt, append to system_prompt alongside memory
+  4. Create AionAgent with user's session
+  5. Call agent.run(message_text)
+  6. Strip ANSI from response
+  7. Split long messages (Slack 4000 char limit per block)
+  8. Send response (reply in thread if message was in thread)
+```
+
+Key slack-bolt patterns:
+```python
+from slack_bolt.async_app import AsyncApp
+from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
+
+app = AsyncApp(token=bot_token)
+
+@app.event("message")
+async def handle_message(event, say):
+    # event["user"], event["channel"], event["text"], event.get("thread_ts")
+    ...
+
+handler = AsyncSocketModeHandler(app, app_token)
+await handler.start_async()
+```
+
+Slack needs TWO tokens:
+- `SLACK_BOT_TOKEN` (xoxb-...) — for sending messages
+- `SLACK_APP_TOKEN` (xapp-...) — for Socket Mode connection
+
+Handle gracefully:
+- Bot mention vs DM vs channel message
+- Thread replies (reply in same thread)
+- Messages from unauthorized users/channels
+- Long responses (split into blocks)
+- Bot's own messages (ignore to avoid loops)
+
+### 8. Gateway runner (src/aion/gateway/runner.py)
 - Load GatewayConfig from ~/.aion/config.yaml
 - Instantiate configured adapters
 - Wire on_message callback: message → agent.run() → send response
 - Start all adapters as asyncio tasks
 - Handle SIGINT/SIGTERM for graceful shutdown
 
-### 8. CLI integration
+### 9. CLI integration
 Add to cli.py (MINIMAL change):
 - Add `--gateway` flag to argparse
 - When --gateway: load config, start runner, block until shutdown
 - This is ~15 lines in cli.py
 
-### 9. pyproject.toml update
+### 10. pyproject.toml update
 - Drop `gemini` optional dependency group
+- Add `slack-bolt>=1.20` and `slack-sdk>=3.30` to core deps
 - Add `structlog` and `mcp` to core deps (for future phases, not used yet)
-- Add optional extras: `slack = ["slack-bolt>=1.20"]`
+- Run `uv sync` after updating to verify deps resolve
 
-### 10. Tests
+### 11. Tests
 Add tests/test_gateway.py:
 - Test GatewayMessage creation
 - Test SessionSource + build_session_context_prompt()
 - Test ANSI stripping
-- Test message splitting (4096 char limit)
-- Test config loading
+- Test message splitting (4096 char for Telegram, 4000 char for Slack)
+- Test config loading (both Telegram and Slack configs)
 - Mock-based test for telegram adapter message flow
-- Do NOT test actual Telegram API (no network in tests)
+- Mock-based test for slack adapter message flow
+- Do NOT test actual Telegram/Slack APIs (no network in tests)
 
-### 11. Config example
-Create ~/.aion/config.yaml.example:
+### 12. Config example
+Create config.yaml.example in the repo root:
 ```yaml
 gateway:
   telegram:
     token: ${TELEGRAM_BOT_TOKEN}
     allowed_users:
       - "123456789"  # your telegram user ID
+  slack:
+    bot_token: ${SLACK_BOT_TOKEN}
+    app_token: ${SLACK_APP_TOKEN}
+    allowed_channels:
+      - "C04ABC123"  # channel ID
 ```
 
 ## Verification
