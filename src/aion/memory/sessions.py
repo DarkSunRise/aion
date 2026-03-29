@@ -329,12 +329,28 @@ class SessionDB:
         title: Optional[str] = None,
         end_reason: Optional[str] = None,
     ):
+        # Sanitize title: strip control chars, enforce length limit
+        try:
+            title = self.sanitize_title(title)
+        except ValueError:
+            # Title too long — truncate rather than crash
+            if title:
+                title = self.sanitize_title(title[:self.MAX_TITLE_LENGTH])
+
         def _do(conn):
-            conn.execute(
-                """UPDATE sessions SET ended_at = ?, cc_session_id = ?,
-                   cost_usd = ?, title = ?, end_reason = ? WHERE id = ?""",
-                (time.time(), cc_session_id, cost_usd, title, end_reason, session_id),
-            )
+            try:
+                conn.execute(
+                    """UPDATE sessions SET ended_at = ?, cc_session_id = ?,
+                       cost_usd = ?, title = ?, end_reason = ? WHERE id = ?""",
+                    (time.time(), cc_session_id, cost_usd, title, end_reason, session_id),
+                )
+            except sqlite3.IntegrityError:
+                # Duplicate title — retry without title rather than lose the session
+                conn.execute(
+                    """UPDATE sessions SET ended_at = ?, cc_session_id = ?,
+                       cost_usd = ?, end_reason = ? WHERE id = ?""",
+                    (time.time(), cc_session_id, cost_usd, end_reason, session_id),
+                )
         self._execute_write(_do)
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:

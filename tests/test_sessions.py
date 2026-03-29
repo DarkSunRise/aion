@@ -407,6 +407,40 @@ class TestConversationFormat:
         assert msgs[0]["reasoning"] == "I thought about this"
 
 
+# ── end_session hardening ──
+
+class TestEndSession:
+    def test_end_session_sanitizes_title(self, db):
+        """end_session should sanitize titles (strip control chars, enforce length)."""
+        db.create_session("s1", source="cli")
+        db.end_session("s1", title="\x00bad\x1ftitle\u200b")
+        s = db.get_session("s1")
+        # Control chars and invisible unicode should be stripped
+        assert "\x00" not in (s["title"] or "")
+        assert "\x1f" not in (s["title"] or "")
+        assert "\u200b" not in (s["title"] or "")
+
+    def test_end_session_truncates_long_title(self, db):
+        """end_session should not crash on overlong titles."""
+        db.create_session("s1", source="cli")
+        long_title = "x" * 200
+        db.end_session("s1", title=long_title)
+        s = db.get_session("s1")
+        assert s["title"] is not None
+        assert len(s["title"]) <= SessionDB.MAX_TITLE_LENGTH
+
+    def test_end_session_duplicate_title_no_crash(self, db):
+        """Duplicate titles in end_session should not raise IntegrityError."""
+        db.create_session("s1", source="cli")
+        db.create_session("s2", source="cli")
+        db.end_session("s1", title="Same Title")
+        # Should not raise — duplicate title should be handled gracefully
+        db.end_session("s2", title="Same Title")
+        s2 = db.get_session("s2")
+        # Session should still be ended (title may be None if deduped)
+        assert s2["ended_at"] is not None
+
+
 # ── WAL Checkpoint ──
 
 class TestWALCheckpoint:
