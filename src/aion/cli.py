@@ -92,19 +92,24 @@ def _print_sessions_table(sessions: list):
 
 
 def _print_search_results(results: list):
-    """Print search results."""
+    """Print search results, deduplicated by session (best match per session)."""
     if not results:
         print("No results found.")
         return
 
+    seen_sessions = set()
     for r in results:
-        sid = r["session_id"][:8]
+        sid = r["session_id"]
+        if sid in seen_sessions:
+            continue
+        seen_sessions.add(sid)
+
         role = r.get("role", "?")
         source = r.get("source", "?")
         snippet = r.get("snippet", r.get("content", ""))[:80]
         title = r.get("title") or "(untitled)"
         age = _format_age(r.get("started_at"))
-        print(f"  [{sid}] {title} ({source}, {age})")
+        print(f"  [{sid[:8]}] {title} ({source}, {age})")
         print(f"    {role}: {snippet}")
         print()
 
