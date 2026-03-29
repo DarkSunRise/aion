@@ -5,15 +5,22 @@ Usage:
     aion "write a haiku"                    # One-shot
     aion                                     # Interactive
     aion --gateway telegram                  # Start gateway
+    aion --resume a3f2                       # Resume session by prefix
+    aion --continue                          # Resume most recent session
+    aion --model claude-opus-4               # Override model
+    aion --sessions                          # List recent sessions
+    aion --search "auth module"              # Search sessions
 """
 
 import asyncio
 import argparse
 import sys
+import time
 from pathlib import Path
 
 from .config import load_config
 from .agent import AionAgent
+from .memory.sessions import SessionDB
 
 
 def _print_message(msg: dict):
@@ -37,24 +44,85 @@ def _print_message(msg: dict):
         print(f"[ERROR] {msg.get('error', 'Unknown')}", file=sys.stderr)
 
 
-async def _run_oneshot(prompt: str, cwd: str):
+def _format_age(started_at: float) -> str:
+    """Format a timestamp as a human-readable age string."""
+    if not started_at:
+        return "?"
+    delta = time.time() - started_at
+    if delta < 60:
+        return f"{int(delta)}s"
+    elif delta < 3600:
+        return f"{int(delta / 60)}m"
+    elif delta < 86400:
+        return f"{int(delta / 3600)}h"
+    else:
+        return f"{int(delta / 86400)}d"
+
+
+def _format_cost(cost_usd) -> str:
+    """Format cost as $X.XX or - if None."""
+    if cost_usd is None:
+        return "-"
+    return f"${cost_usd:.2f}"
+
+
+def _print_sessions_table(sessions: list):
+    """Print sessions as a formatted table."""
+    if not sessions:
+        print("No sessions found.")
+        return
+
+    print(f"  {'ID':<9}{'TITLE':<23}{'SOURCE':<8}{'AGE':<7}{'MSGS':>5}  {'COST':>6}")
+    for s in sessions:
+        sid = s["id"][:4] + ".."
+        title = (s.get("title") or "(untitled)")[:22]
+        source = (s.get("source") or "?")[:7]
+        age = _format_age(s.get("started_at"))
+        msgs = s.get("message_count", 0)
+        cost = _format_cost(s.get("cost_usd"))
+        print(f"  {sid:<9}{title:<23}{source:<8}{age:<7}{msgs:>5}  {cost:>6}")
+
+
+def _print_search_results(results: list):
+    """Print search results."""
+    if not results:
+        print("No results found.")
+        return
+
+    for r in results:
+        sid = r["session_id"][:8]
+        role = r.get("role", "?")
+        source = r.get("source", "?")
+        snippet = r.get("snippet", r.get("content", ""))[:80]
+        title = r.get("title") or "(untitled)"
+        age = _format_age(r.get("started_at"))
+        print(f"  [{sid}] {title} ({source}, {age})")
+        print(f"    {role}: {snippet}")
+        print()
+
+
+async def _run_oneshot(prompt: str, cwd: str, config, resume_session_id=None):
     """Run a single prompt and exit."""
-    config = load_config()
     agent = AionAgent(config)
 
-    async for msg in agent.run(prompt, source="cli", cwd=cwd):
+    async for msg in agent.run(prompt, source="cli", cwd=cwd,
+                               resume_session_id=resume_session_id):
         _print_message(msg)
 
 
-async def _run_interactive(cwd: str):
+async def _run_interactive(cwd: str, config, resume_session_id=None):
     """Interactive REPL."""
-    config = load_config()
     agent = AionAgent(config)
+
+    # Track the Aion session ID for carry-across-turns
+    current_resume_id = resume_session_id
 
     print("Aion — Anthropic-native AI agent")
     print(f"Model: {config.model}")
     print(f"Memory: {agent.memory._char_count('memory')}/{config.memory.char_limit} chars")
-    print("Type /quit to exit\n")
+    if current_resume_id:
+        print(f"Resuming session: {current_resume_id[:8]}...")
+    print("Type /quit to exit, /help for commands\n")
 
     while True:
         try:
@@ -69,31 +137,156 @@ async def _run_interactive(cwd: str):
             print("Bye!")
             break
 
-        async for msg in agent.run(prompt, source="cli", cwd=cwd):
+        # --- REPL commands ---
+        if prompt.lower() == "/help":
+            print("  /sessions        — List recent sessions")
+            print("  /resume ID       — Resume a session by ID prefix")
+            print("  /search QUERY    — Search past sessions")
+            print("  /memory          — Show current memory snapshot")
+            print("  /quit            — Exit")
+            print()
+            continue
+
+        if prompt.lower() == "/sessions":
+            sessions = agent.recent_sessions(20)
+            _print_sessions_table(sessions)
+            print()
+            continue
+
+        if prompt.lower().startswith("/resume"):
+            parts = prompt.split(maxsplit=1)
+            if len(parts) < 2 or not parts[1].strip():
+                print("Usage: /resume SESSION_ID")
+                print()
+                continue
+            prefix = parts[1].strip()
+            resolved = agent.sessions.resolve_session_id(prefix)
+            if not resolved:
+                print(f"No unique session matching '{prefix}'")
+                print()
+                continue
+            current_resume_id = resolved
+            session = agent.sessions.get_session(resolved)
+            title = (session.get("title") or "(untitled)") if session else "?"
+            print(f"Resumed session: {resolved[:8]}.. — {title}")
+            print()
+            continue
+
+        if prompt.lower().startswith("/search"):
+            parts = prompt.split(maxsplit=1)
+            if len(parts) < 2 or not parts[1].strip():
+                print("Usage: /search QUERY")
+                print()
+                continue
+            query = parts[1].strip()
+            results = agent.sessions.search(query, limit=10)
+            _print_search_results(results)
+            continue
+
+        if prompt.lower() == "/memory":
+            snap = agent.memory.snapshot
+            if snap.get("memory"):
+                print("── MEMORY.md ──")
+                print(snap["memory"])
+            if snap.get("user"):
+                print("── USER.md ──")
+                print(snap["user"])
+            if not snap.get("memory") and not snap.get("user"):
+                print("(no memory entries)")
+            print()
+            continue
+
+        # --- Normal prompt ---
+        async for msg in agent.run(prompt, source="cli", cwd=cwd,
+                                   resume_session_id=current_resume_id):
             _print_message(msg)
+
+        # Carry session forward: use the most recent Aion session ID
+        # so the next turn resumes the same CC session
+        recent = agent.sessions.recent_sessions(1)
+        if recent:
+            current_resume_id = recent[0]["id"]
+
         print()
 
 
-def main():
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser (exposed for testing)."""
     parser = argparse.ArgumentParser(description="Aion — Anthropic-native AI agent")
     parser.add_argument("prompt", nargs="?", help="One-shot prompt (omit for interactive mode)")
     parser.add_argument("--cwd", default=".", help="Working directory")
     parser.add_argument("--gateway", help="Start gateway (telegram, discord, slack)")
     parser.add_argument("--config", help="Path to config.yaml")
+    parser.add_argument("--resume", metavar="SESSION_ID",
+                        help="Resume a previous session (supports prefix matching)")
+    parser.add_argument("--continue", dest="continue_session", action="store_true",
+                        help="Resume the most recent session")
+    parser.add_argument("--model", help="Override model name")
+    parser.add_argument("--sessions", action="store_true",
+                        help="List recent sessions and exit")
+    parser.add_argument("--search", metavar="QUERY",
+                        help="Search sessions and exit")
+    return parser
 
+
+def main():
+    parser = _build_parser()
     args = parser.parse_args()
 
     cwd = str(Path(args.cwd).resolve())
+    config = load_config(Path(args.config) if args.config else None)
+
+    # --model override
+    if args.model:
+        config.model = args.model
 
     if args.gateway:
-        # TODO: Launch gateway
         print(f"Gateway mode: {args.gateway} (not yet implemented)")
         sys.exit(1)
 
+    # --sessions: list and exit
+    if args.sessions:
+        db = SessionDB(config.aion_home / "state.db")
+        db.connect()
+        sessions = db.recent_sessions(20)
+        _print_sessions_table(sessions)
+        db.close()
+        return
+
+    # --search: search and exit
+    if args.search:
+        db = SessionDB(config.aion_home / "state.db")
+        db.connect()
+        results = db.search(args.search, limit=10)
+        _print_search_results(results)
+        db.close()
+        return
+
+    # Resolve --resume / --continue
+    resume_session_id = None
+    if args.resume:
+        db = SessionDB(config.aion_home / "state.db")
+        db.connect()
+        resolved = db.resolve_session_id(args.resume)
+        db.close()
+        if not resolved:
+            print(f"Error: No unique session matching '{args.resume}'", file=sys.stderr)
+            sys.exit(1)
+        resume_session_id = resolved
+    elif args.continue_session:
+        db = SessionDB(config.aion_home / "state.db")
+        db.connect()
+        recent = db.recent_sessions(1)
+        db.close()
+        if not recent:
+            print("Error: No sessions to continue", file=sys.stderr)
+            sys.exit(1)
+        resume_session_id = recent[0]["id"]
+
     if args.prompt:
-        asyncio.run(_run_oneshot(args.prompt, cwd))
+        asyncio.run(_run_oneshot(args.prompt, cwd, config, resume_session_id))
     else:
-        asyncio.run(_run_interactive(cwd))
+        asyncio.run(_run_interactive(cwd, config, resume_session_id))
 
 
 if __name__ == "__main__":
